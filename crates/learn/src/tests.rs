@@ -499,3 +499,26 @@ fn skill_checks_go_before_after_and_a_week_later() {
     assert!(p.next_checkpoint(t0 + 3 * DAY).is_err(), "the delayed check waits a week");
     assert_eq!(p.next_checkpoint(t0 + 8 * DAY), Ok(Phase::Later));
 }
+
+#[test]
+fn a_case_goes_to_excel_and_comes_back_graded() {
+    let dir = std::env::temp_dir().join(format!("taskathlon-transfer-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    for c in CASES {
+        let task = Task::generate(&Spec::new(c.id, 3, 21)).unwrap();
+        let path = dir.join(format!("{}.xlsx", c.id));
+        crate::transfer::export(&task, &path).unwrap();
+        assert!(!crate::transfer::grade(&task, &path).unwrap().passed(), "{} passes untouched", c.id);
+        // Solve it "in Excel": open the file, put the answers in, save.
+        let mut s = Session::new();
+        s.execute("file.open", json!({"path": path})).unwrap();
+        s.execute("sheet.activate", json!({"sheet": 0})).unwrap();
+        solve(&task, &mut s);
+        s.execute("sheet.activate", json!({"sheet": 1})).unwrap();
+        s.execute("file.save", json!({})).unwrap();
+        let eval = crate::transfer::grade(&task, &path).unwrap();
+        let failed: Vec<_> = eval.outcomes.iter().filter(|o| !o.passed).map(|o| format!("{}: {}", o.label, o.feedback)).collect();
+        assert!(eval.passed(), "{}: {failed:?}", c.id);
+    }
+    std::fs::remove_dir_all(dir).unwrap();
+}

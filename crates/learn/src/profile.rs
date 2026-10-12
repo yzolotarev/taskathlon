@@ -37,6 +37,21 @@ impl Phase {
     }
 }
 
+/// A task sent out as an .xlsx file and not yet solved.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct PendingTransfer {
+    pub spec: Spec,
+    pub path: String,
+    pub at: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct TransferResult {
+    pub case: String,
+    pub at: u64,
+    pub score: f32,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Checkpoint {
     pub phase: Phase,
@@ -120,6 +135,10 @@ pub struct Profile {
     /// "Which method" questions: answered right on the first pick / asked.
     #[serde(default)]
     pub checkpoints: Vec<Checkpoint>,
+    #[serde(default)]
+    pub pending_transfer: Option<PendingTransfer>,
+    #[serde(default)]
+    pub transfers: Vec<TransferResult>,
     #[serde(default)]
     pub method_right: u32,
     #[serde(default)]
@@ -284,6 +303,8 @@ impl Default for Profile {
             dark: false,
             english: false,
             checkpoints: Vec::new(),
+            pending_transfer: None,
+            transfers: Vec::new(),
             method_right: 0,
             method_total: 0,
             gems: 50,
@@ -677,6 +698,25 @@ impl Profile {
 
     /// A finished blitz: XP by points, quest and badge.
     /// One solved task in the accounting program: base XP plus a speed bonus against par.
+    /// A graded file from real Excel. Misses go back to practice, like a case; a pass closes the task.
+    pub fn record_transfer(&mut self, task: &crate::Task, eval: &crate::Evaluation, now: u64) -> Change {
+        let mut change = Change::default();
+        for o in eval.outcomes.iter().filter(|o| !o.passed) {
+            if SKILLS.iter().any(|s| s.id == o.skill) && !self.remediation.contains(&o.skill) {
+                self.remediation.push(o.skill.clone());
+            }
+        }
+        self.remediation.truncate(6);
+        let xp = (eval.score * 40.0).round() as u32;
+        self.add_xp(xp, now, &mut change);
+        change.xp = xp;
+        self.transfers.push(TransferResult { case: task.spec.skill.clone(), at: now, score: eval.score });
+        if eval.passed() {
+            self.pending_transfer = None;
+        }
+        change
+    }
+
     /// Battery skills already at level 3 or higher.
     pub fn checkpoint_trained(&self) -> usize {
         CHECKPOINT_SKILLS.iter().filter(|s| self.level(s) >= 3).count()

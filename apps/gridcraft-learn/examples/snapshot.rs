@@ -48,6 +48,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             app.screen = Screen::Stats;
         }
         "checkpoint" => app.start_checkpoint()?,
+        "transfer" => {
+            app.start_transfer()?;
+            app.check_transfer()?;
+        }
         "checkdone" => {
             app.start_checkpoint()?;
             for _ in 0..8 {

@@ -14,6 +14,7 @@ pub mod sheet;
 pub mod sql;
 #[cfg(test)]
 mod tests;
+pub mod transfer;
 
 pub use check::{Check, Evaluation, Kind, Outcome, evaluate};
 pub use profile::{Attempt, Lesson, Profile, Slot};

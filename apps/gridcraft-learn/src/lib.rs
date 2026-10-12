@@ -15,7 +15,7 @@ use gridcraft_learn_core::{
     Current, Evaluation, Interview, LearnError, Lesson, Mode, Profile, SAVE_VERSION, Save, Slot, Spec, Task,
     content::{self, CASES},
     evaluate,
-    profile::{Change, Checkpoint, Medal, SPRINT_PENALTY, Speed, SprintResult, achievement},
+    profile::{Change, Checkpoint, Medal, PendingTransfer, SPRINT_PENALTY, Speed, SprintResult, achievement},
     quiz::{self, BlitzResult, Question, Track},
     sql::{self, ResultSet},
 };
@@ -163,6 +163,8 @@ pub struct Report {
     pub interview: bool,
     pub xp: u32,
     pub timed_out: bool,
+    /// Graded from a file solved in real Excel.
+    pub transfer: bool,
 }
 
 pub struct LearningApp {
@@ -402,6 +404,66 @@ impl LearningApp {
         }
     }
 
+    /// Where task files for real Excel go: next to the profile, or in the temp folder.
+    fn excel_dir(&self) -> PathBuf {
+        self.path.as_ref().and_then(|p| p.parent()).map(|d| d.join("excel")).unwrap_or_else(|| std::env::temp_dir().join("taskathlon-excel"))
+    }
+
+    /// Stage 5 of the ladder: a fresh case as an .xlsx file to solve in real Excel.
+    pub fn start_transfer(&mut self) -> Result<(), LearnError> {
+        let seed = self.profile.seed();
+        let mut ids: Vec<(&str, usize)> = CASES.iter().map(|c| (c.id, self.profile.transfers.iter().filter(|t| t.case == c.id).count())).collect();
+        ids.sort_by_key(|(_, n)| *n);
+        let least = ids.first().map(|x| x.1).unwrap_or(0);
+        let pool: Vec<&str> = ids.iter().filter(|x| x.1 == least).map(|x| x.0).collect();
+        let id = pool.get(seed as usize % pool.len().max(1)).copied().unwrap_or("case.sales");
+        let spec = Spec::new(id, 3, seed);
+        let task = Task::generate(&spec)?;
+        let dir = self.excel_dir();
+        std::fs::create_dir_all(&dir).map_err(|e| LearnError::Invalid(e.to_string()))?;
+        let name = format!("taskathlon-{}-{}.xlsx", id.trim_start_matches("case."), seed % 10_000);
+        let path = dir.join(name);
+        gridcraft_learn_core::transfer::export(&task, &path)?;
+        self.profile.pending_transfer = Some(PendingTransfer { spec, path: path.to_string_lossy().into_owned(), at: now() });
+        self.open_file();
+        self.save()
+    }
+
+    /// Opens the pending task file in the system's spreadsheet program.
+    pub fn open_file(&mut self) {
+        let Some(t) = &self.profile.pending_transfer else { return };
+        let path = t.path.clone();
+        let spawned = if cfg!(target_os = "windows") {
+            std::process::Command::new("cmd").args(["/C", "start", "", &path]).spawn()
+        } else if cfg!(target_os = "macos") {
+            std::process::Command::new("open").arg(&path).spawn()
+        } else {
+            std::process::Command::new("xdg-open").arg(&path).spawn()
+        };
+        if spawned.is_err() {
+            self.notice = Some(tr(&format!("Открой файл вручную: {path}")));
+        }
+    }
+
+    /// Grades the saved file with the case's checks.
+    pub fn check_transfer(&mut self) -> Result<(), LearnError> {
+        let Some(t) = self.profile.pending_transfer.clone() else { return Ok(()) };
+        let task = Task::generate(&t.spec)?;
+        let eval = gridcraft_learn_core::transfer::grade(&task, std::path::Path::new(&t.path))?;
+        let change = self.profile.record_transfer(&task, &eval, now());
+        self.celebrate(&change);
+        if eval.passed() {
+            self.pending_confetti = true;
+            self.cue(Cue::Complete);
+        } else {
+            self.cue(if eval.score >= 0.5 { Cue::Correct } else { Cue::Wrong });
+        }
+        let seconds = now().saturating_sub(t.at) as f32;
+        self.report = Some(Report { task, eval, seconds, interview: false, xp: change.xp, timed_out: false, transfer: true });
+        self.screen = Screen::Report;
+        self.save()
+    }
+
     /// The skill check that is due: eight tasks, new data, no hints.
     pub fn start_checkpoint(&mut self) -> Result<(), LearnError> {
         let phase = match self.profile.next_checkpoint(now()) {
@@ -570,7 +632,7 @@ impl LearningApp {
         } else {
             self.cue(if eval.score >= 0.5 { Cue::Correct } else { Cue::Wrong });
         }
-        self.report = Some(Report { task: a.task, eval, seconds, interview: interview.is_some(), xp: change.xp, timed_out });
+        self.report = Some(Report { task: a.task, eval, seconds, interview: interview.is_some(), xp: change.xp, timed_out, transfer: false });
         self.screen = Screen::Report;
         self.save()
     }

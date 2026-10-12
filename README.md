@@ -25,7 +25,10 @@ For people applying for accountant, office analyst or finance roles who want Exc
 - 🧮 **Excel.** References and `$`, SUMIF(S), VLOOKUP/XLOOKUP/INDEX+MATCH, dates, text, pivots and shortcuts, with Russian function names as in Russian Excel (`=СУММЕСЛИ(A2:A9;"Самара";B2:B9)`). Formulas are computed by the GridCraft engine.
 - 🗄 **SQL.** 16 skills from `SELECT` to window functions. Write a query and see the result. Answers are re-checked on different data, so you can't hard-code them.
 - 📒 **Accounting program.** A working double-entry ledger: catalogs, 13 document types with **Post / Unpost**, entries, month-end close, trial balance, account card, account analysis and P&L, plus a timed workshop of 11 tasks.
-- 💼 **Work cases and interview mode:** a brief from a manager, data, a timer and a debrief.
+- 💼 **Work cases and interview mode:** a brief from a manager, data, a timer and a debrief. Some cases are deliberately messy, such as two exports that don't match, with text amounts, junk rows and a doubled line. Any method is accepted.
+- 🤔 **Method choice:** before mixed tasks and cases you pick the tool and the reason (formula, PivotTable, filter, SQL). A wrong pick sends that skill back to practice.
+- 📈 **Skill check:** the same 8 skills on new data, without hints: before training, after it and a week later. It shows whether a skill appeared and whether it held.
+- 📤 **Transfer to real Excel:** a case goes out as an `.xlsx` file. You solve it in Excel, save it, and the same checks grade the file.
 - ⏱ **Timed test:** 15 questions, each with its own timer. Excel, SQL or mixed.
 - 🏁 **Sprint:** 10 real tasks against the stopwatch, with medals and personal records.
 - ⚡ **Motivation:** faster answers earn more points. Combos, streaks, a daily goal, daily quests, gems, streak freezes, streak wagers and 18 achievements.
@@ -40,6 +43,16 @@ For people applying for accountant, office analyst or finance roles who want Exc
   <img src="docs/images/taskathlon-sql.png" alt="SQL task" width="49%">
   <img src="docs/images/taskathlon-blitz.png" alt="Timed test" width="49%">
 </p>
+
+## The learning ladder
+
+1. **Mechanical practice:** one formula, many times, with the levels "Follow me" and "With a hint".
+2. **Recognising the situation:** a business question without the tool's name, plus "which tool and why".
+3. **Combining skills:** cases where lookups, conditions, sorting and filters work together.
+4. **Open work task:** messy, unfamiliar data and several valid ways to solve it.
+5. **Transfer:** the same kind of task in real Excel on a new file.
+
+Misses in cases, interviews, method questions and Excel files send the weak skill back to step 1.
 
 ## Run
 

@@ -196,6 +196,42 @@ fn side_column(app: &mut LearningApp, ui: &mut Ui, p: &Palette, t: u64, frontier
         }
     });
     card(ui, p, None, |ui| {
+        ui.label(RichText::new(ts("📤 Задание в Excel")).size(17.0).strong().color(p.text));
+        ui.label(
+            RichText::new(ts(
+                "Рабочий кейс файлом .xlsx: реши в настоящем Excel без тренажёра, сохрани — Taskathlon проверит файл теми же проверками.",
+            ))
+            .size(13.0)
+            .color(p.muted),
+        );
+        ui.add_space(6.0);
+        let excel = Color32::from_rgb(33, 115, 70);
+        if let Some(t) = app.profile.pending_transfer.clone() {
+            let name = std::path::Path::new(&t.path).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+            ui.label(RichText::new(format!("📄 {name}")).size(13.0).strong().color(p.text)).on_hover_text(&t.path);
+            if big_button(ui, ts("ПРОВЕРИТЬ ФАЙЛ"), excel, vec2(ui.available_width(), 44.0)).clicked() {
+                let r = app.check_transfer();
+                app.handle(r);
+            }
+            ui.horizontal(|ui| {
+                if ui.button(ts("Открыть файл")).clicked() {
+                    app.open_file();
+                }
+                if ui.button(ts("Другое задание")).clicked() {
+                    let r = app.start_transfer();
+                    app.handle(r);
+                }
+            });
+        } else if big_button(ui, ts("ПОЛУЧИТЬ ФАЙЛ"), excel, vec2(ui.available_width(), 44.0)).clicked() {
+            let r = app.start_transfer();
+            app.handle(r);
+        }
+        let done = app.profile.transfers.iter().filter(|t| t.score >= 0.999).count();
+        if !app.profile.transfers.is_empty() {
+            ui.label(RichText::new(tr(&format!("Сдано без замечаний: {done} из {}", app.profile.transfers.len()))).size(12.0).color(p.muted));
+        }
+    });
+    card(ui, p, None, |ui| {
         ui.label(RichText::new(ts("📈 Срез навыка")).size(17.0).strong().color(p.text));
         ui.label(
             RichText::new(ts("8 задач на новых данных, без подсказок. Пройди до обучения, после и через неделю — увидишь, держится ли навык."))
@@ -929,7 +965,13 @@ pub fn report(app: &mut LearningApp, ui: &mut Ui) {
                 }));
                 ui.label(RichText::new(verdict).size(22.0).strong().color(p.text));
                 let mins = (r.seconds / 60.0).ceil();
-                let kind = if r.interview { ts("Собеседование") } else { ts("Кейс") };
+                let kind = if r.transfer {
+                    ts("Перенос в Excel")
+                } else if r.interview {
+                    ts("Собеседование")
+                } else {
+                    ts("Кейс")
+                };
                 ui.label(
                     RichText::new(tr(&format!(
                         "{kind} «{}» · {mins} мин · +{} XP{}",
@@ -965,6 +1007,9 @@ pub fn report(app: &mut LearningApp, ui: &mut Ui) {
                 ui.add_space(8.0);
                 if r.interview && big_button(ui, ts("ЕЩЁ ОДНО СОБЕСЕДОВАНИЕ"), p.blue, vec2(320.0, 50.0)).clicked() {
                     action = 2;
+                }
+                if r.transfer && !r.eval.passed() {
+                    ui.label(RichText::new(ts("Исправь файл в Excel, сохрани и проверь ещё раз — задание ждёт на главной.")).color(p.muted));
                 }
                 ui.add_space(8.0);
                 if ghost_button(ui, ts("НА ГЛАВНУЮ"), &p, vec2(320.0, 46.0)).clicked() {
@@ -1628,6 +1673,11 @@ pub fn stats(app: &mut LearningApp, ui: &mut Ui) {
                         let sign = if d > 0 { "+" } else { "" };
                         ui.label(RichText::new(tr(&format!("С первого среза: {sign}{d} задач", ))).strong().color(if d >= 0 { p.green_dark } else { p.red }));
                     }
+                }
+                if !prof.transfers.is_empty() {
+                    let done = prof.transfers.iter().filter(|t| t.score >= 0.999).count();
+                    ui.add_space(6.0);
+                    ui.label(RichText::new(tr(&format!("Перенос в Excel: {done} из {} файлов сданы без замечаний", prof.transfers.len()))).color(p.text));
                 }
                 if prof.method_total > 0 {
                     ui.add_space(6.0);
