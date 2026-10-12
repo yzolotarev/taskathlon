@@ -1,0 +1,12 @@
+[package]
+name = "gridcraft-ledger"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Taskathlon accounting core: catalogs, documents that post double entries, registers and reports (clean-room)"
+[lints]
+workspace = true
+[dependencies]
+serde.workspace = true
+thiserror.workspace = true
+serde_json.workspace = true
