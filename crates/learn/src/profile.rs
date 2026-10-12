@@ -81,6 +81,12 @@ pub struct SkillProgress {
     pub hints: u32,
 }
 
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct ActionProgress {
+    pub attempts: u32,
+    pub successes: u32,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Attempt {
     pub skill: String,
@@ -125,6 +131,8 @@ pub struct Profile {
     /// Hours east of UTC for day boundaries (Moscow by default).
     pub utc_offset: i64,
     pub skills: BTreeMap<String, SkillProgress>,
+    /// First-submission evidence for individual actions, independent of whole-task success.
+    pub actions: BTreeMap<String, ActionProgress>,
     pub cases: BTreeMap<String, CaseProgress>,
     /// Skills a failed case or interview sent back for practice.
     pub remediation: Vec<String>,
@@ -304,6 +312,7 @@ impl Default for Profile {
             goal: 50,
             utc_offset: 3,
             skills: BTreeMap::new(),
+            actions: BTreeMap::new(),
             cases: BTreeMap::new(),
             remediation: Vec::new(),
             log: Vec::new(),
@@ -488,9 +497,20 @@ impl Profile {
         for (id, _) in error_reviews.into_iter().take(2) {
             queue.push_back(Slot::Review(id.clone()));
         }
-        let remedy: Vec<String> = self.remediation.drain(..).take(2).collect();
+        let remedy: Vec<String> = self.remediation.drain(..self.remediation.len().min(2)).collect();
         for r in &remedy {
-            queue.push_back(Slot::Retry(r.clone()));
+            let target = crate::diagnostics::prerequisites(r)
+                .iter()
+                .copied()
+                .find(|id| {
+                    let failures: Vec<_> = self.log.iter().rev().filter(|a| a.skill == *id).take(2).collect();
+                    self.skills.get(*id).is_some_and(|p| p.misses >= 2) || failures.len() == 2 && failures.iter().all(|a| !a.passed)
+                })
+                .unwrap_or(r);
+            queue.push_back(Slot::Retry(target.into()));
+            if target != r && !self.remediation.contains(r) {
+                self.remediation.push(r.clone());
+            }
         }
         let due = self.due(now);
         let reviews: Vec<&str> = due.iter().copied().filter(|d| !remedy.iter().any(|r| r == d) && Some(*d) != focus).take(2).collect();
@@ -846,21 +866,36 @@ impl Profile {
         change
     }
 
-    /// Skills good for a speed run: practised to level 2 or more.
+    /// Speed practice requires three recent unaided first-attempt successes.
+    pub fn sprint_ready(&self, id: &str) -> bool {
+        let recent: Vec<_> = self.log.iter().rev().filter(|a| a.skill == id && a.mode == Mode::Drill).take(3).collect();
+        self.level(id) >= 2 && recent.len() == 3 && recent.iter().all(|a| a.passed && a.hints == 0 && a.level >= 2)
+    }
+
+    /// Skills with demonstrated accuracy before timed practice.
     pub fn sprint_skills(&self) -> Vec<&'static str> {
-        SKILLS.iter().filter(|s| self.level(s.id) >= 2).map(|s| s.id).collect()
+        SKILLS.iter().filter(|s| self.sprint_ready(s.id)).map(|s| s.id).collect()
     }
 
     /// Ten tasks against the clock: one skill, or a mix of practised skills.
     pub fn plan_sprint(&mut self, skill: Option<&str>) -> Lesson {
         let pool: Vec<String> = match skill {
-            Some(s) => vec![s.to_string()],
+            Some(s) => {
+                if self.sprint_ready(s) {
+                    vec![s.to_string()]
+                } else {
+                    Vec::new()
+                }
+            }
             None => {
                 let v = self.sprint_skills();
-                if v.is_empty() { vec!["start.add".into(), "start.mul".into(), "fn.sum".into()] } else { v.iter().map(|s| s.to_string()).collect() }
+                v.iter().map(|s| s.to_string()).collect()
             }
         };
         let mut queue = VecDeque::new();
+        if pool.is_empty() {
+            return Lesson { sprint: Some(skill.unwrap_or("mix").to_string()), ..Lesson::default() };
+        }
         let mut k = self.seed() as usize;
         for i in 0..SPRINT_LEN {
             let id = pool.get((k + i * 7) % pool.len().max(1)).cloned().unwrap_or_else(|| "start.add".into());
@@ -915,7 +950,6 @@ impl Profile {
         let id = task.spec.skill.clone();
         let level = task.spec.level;
         let p = self.skills.entry(id.clone()).or_default();
-        let first_ever = p.attempts == 0;
         if p.level == 0 {
             p.level = 1;
         }
@@ -937,8 +971,6 @@ impl Profile {
             Grade::Again
         } else if hints > 0 {
             Grade::Hard
-        } else if speed != Speed::Normal && level >= 2 {
-            Grade::Easy
         } else {
             Grade::Good
         };
@@ -956,15 +988,9 @@ impl Profile {
                 p.clean = 0;
                 change.level_up = Some(3);
                 change.fast_track = true;
-            } else if hints == 0 && first_ever && level == 1 && speed != Speed::Normal {
-                // Clearly familiar from the first try: jump past the copying stage.
-                p.level = 3;
-                p.clean = 0;
-                change.level_up = Some(3);
-                change.fast_track = true;
             } else if hints == 0 && on_level {
-                // Understanding shows as speed: a fast clean answer counts double.
-                p.clean = p.clean.saturating_add(if speed == Speed::Normal { 1 } else { 2 });
+                // Accuracy advances mastery; response speed does not substitute for recall.
+                p.clean = p.clean.saturating_add(1);
                 let need = NEED.get(usize::from(p.level.saturating_sub(1))).copied().unwrap_or(u8::MAX);
                 if p.level < 4 && p.clean >= need {
                     p.level += 1;
@@ -1047,7 +1073,12 @@ impl Profile {
                 missed.push(o.skill.clone());
             }
         }
+        let mut credited = Vec::new();
         for o in &eval.outcomes {
+            if credited.contains(&o.skill) {
+                continue;
+            }
+            credited.push(o.skill.clone());
             if let Some(p) = self.skills.get_mut(&o.skill)
                 && p.card.reps > 0
                 && !missed.contains(&o.skill)

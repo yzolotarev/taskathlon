@@ -192,7 +192,9 @@ fn side_column(app: &mut LearningApp, ui: &mut Ui, p: &Palette, t: u64, frontier
                 ui.label(RichText::new(tr(&format!("Рекорд: {}", clock(best)))).size(12.0).color(p.muted));
             }
         } else {
-            ui.label(RichText::new(ts("Откроется, когда освоишь первые навыки (уровень 2).")).size(12.0).color(p.muted));
+            ui.label(
+                RichText::new(ts("Откроется после трёх правильных ответов подряд без подсказок на уровне 2 или выше.")).size(12.0).color(p.muted),
+            );
         }
     });
     card(ui, p, None, |ui| {
@@ -520,7 +522,6 @@ pub fn lesson(app: &mut LearningApp, ui: &mut Ui) {
     let (done, total, combo) = a.lesson.as_ref().map(|l| (l.done, l.total, l.combo)).unwrap_or((0, 1, 0));
     let sprint = a.lesson.as_ref().and_then(|l| l.sprint.clone());
     let misses = a.lesson.as_ref().map(|l| l.misses).unwrap_or(0);
-    let task_secs = a.seconds();
     let slot = a.slot.clone();
     let task = a.task.clone();
     let hints_used = app.show_hints;
@@ -575,20 +576,6 @@ pub fn lesson(app: &mut LearningApp, ui: &mut Ui) {
                 chip(ui, &tr(&format!("Уровень {}: {}", task.spec.level, level_name(task.spec.level))), p.muted, p.card);
                 if !task.keys().is_empty() {
                     chip(ui, &format!("⌨ {}", task.keys().join(", ")), p.text, Color32::from_rgb(255, 236, 179));
-                }
-                if sprint.is_none() && app.feedback.is_none() {
-                    // A quiet stopwatch: under 40 % of the target time is a lightning answer.
-                    let goal = task.goal_seconds;
-                    let c = if task_secs <= goal * 0.4 {
-                        p.gold
-                    } else if task_secs <= goal * 0.7 {
-                        p.green
-                    } else {
-                        p.muted
-                    };
-                    let mark = if task_secs <= goal * 0.4 { "⚡" } else { "⏱" };
-                    chip(ui, &tr(&format!("{mark} {:.0} / {:.0} с", task_secs, goal)), c, p.card);
-                    ui.ctx().request_repaint_after(std::time::Duration::from_millis(250));
                 }
             });
             ui.add_space(6.0);
@@ -1668,7 +1655,7 @@ pub fn stats(app: &mut LearningApp, ui: &mut Ui) {
                 ui.add_space(16.0);
                 ui.horizontal(|ui| {
                     ui.label(RichText::new(ts("🏁 Спринты")).size(18.0).strong().color(p.text));
-                    if ui.button(ts("Спринт: микс")).clicked() {
+                    if ui.add_enabled(!prof.sprint_skills().is_empty(), egui::Button::new(ts("Спринт: микс"))).clicked() {
                         sprint = Some(None);
                     }
                 });
@@ -1737,6 +1724,19 @@ pub fn stats(app: &mut LearningApp, ui: &mut Ui) {
                     ui.add_space(6.0);
                     ui.label(RichText::new(tr(&format!("Перенос в Excel: {done} из {} файлов сданы без замечаний", prof.transfers.len()))).color(p.text));
                 }
+                if !prof.actions.is_empty() {
+                    ui.add_space(6.0);
+                    ui.label(RichText::new(ts("Отдельные действия: точность первой попытки")).strong().color(p.text));
+                    for (id, action) in &prof.actions {
+                        let label = match id.as_str() {
+                            "comparison" => ts("Знаки сравнения"),
+                            "keys.filldown" => ts("Заполнение Ctrl+D"),
+                            "refs.fill" => ts("Заполнение столбца"),
+                            _ => id.as_str(),
+                        };
+                        ui.label(tr(&format!("{label}: {} из {}", action.successes, action.attempts)));
+                    }
+                }
                 if prof.method_total > 0 {
                     ui.add_space(6.0);
                     ui.label(
@@ -1776,7 +1776,7 @@ pub fn stats(app: &mut LearningApp, ui: &mut Ui) {
                                     })
                                     .unwrap_or_else(|| "—".into()),
                             );
-                            if prof.level(s.id) >= 2 {
+                            if prof.sprint_ready(s.id) {
                                 if ui.small_button("🏁").on_hover_text(ts("Спринт по этому навыку")).clicked() {
                                     sprint = Some(Some(s.id.to_string()));
                                 }

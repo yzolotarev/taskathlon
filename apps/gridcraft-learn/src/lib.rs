@@ -92,6 +92,8 @@ impl Blitz {
 
 pub struct Active {
     pub task: Task,
+    /// Workbook identity, so an opened/new file cannot be graded as this exercise.
+    pub document_uid: u64,
     pub lesson: Option<Lesson>,
     pub interview: Option<Interview>,
     pub slot: Option<Slot>,
@@ -286,21 +288,32 @@ impl LearningApp {
             // Existing saves already keep the current workbook's zoom.
             app.remember_zoom();
             app.keys = c.keys.clone();
+            app.feedback = c.evaluation.map(|eval| Feedback {
+                passed: eval.passed(),
+                eval,
+                xp: 0,
+                level_up: None,
+                level_down: false,
+                goal_reached: false,
+                corrected: false,
+                change: Change::default(),
+            });
             app.screen = if c.task.mode == Mode::Drill { Screen::Lesson } else { Screen::Case };
             app.show_hints = c.shown_hints.unwrap_or(c.hints);
             app.active = Some(Active {
                 task: c.task,
+                document_uid: app.sheet.session.doc()?.uid,
                 lesson: c.lesson,
                 interview: c.interview,
                 slot: c.slot,
                 started: instant(),
                 before: c.elapsed,
                 hints: c.hints,
-                recorded: false,
-                choice: usize::MAX,
+                recorded: c.recorded,
+                choice: c.choice,
                 query: c.query,
                 sql_result: None,
-                picked: None,
+                picked: c.picked,
             });
             app.graded_revision = app.revision();
             app.apply_ribbon();
@@ -312,21 +325,37 @@ impl LearningApp {
         self.sheet.session.doc().ok().map(|d| d.revision)
     }
 
+    fn exercise_document_is_active(&self) -> bool {
+        self.active.as_ref().is_some_and(|a| self.sheet.session.active().is_some_and(|d| d.uid == a.document_uid))
+    }
+
+    fn require_exercise_document(&self) -> Result<(), LearnError> {
+        if self.active.is_some() && !self.exercise_document_is_active() {
+            return Err(LearnError::Invalid(ts("Вернись к учебной книге, чтобы проверить задание").into()));
+        }
+        Ok(())
+    }
+
     pub fn save(&mut self) -> Result<(), LearnError> {
         self.last_save = instant();
         self.remember_zoom();
         self.profile.interface_scale = self.sheet.ui.interface_scale;
         let Some(path) = self.path.clone() else { return Ok(()) };
-        let current = match &self.active {
-            Some(a) => Some(Current {
+        let current = match self.active.as_ref().and_then(|a| self.sheet.session.documents().iter().find(|d| d.uid == a.document_uid).map(|d| (a, d)))
+        {
+            Some((a, document)) => Some(Current {
                 task: a.task.clone(),
                 slot: a.slot.clone(),
-                workbook: (*self.sheet.session.doc()?.wb).clone(),
+                workbook: (*document.wb).clone(),
                 lesson: a.lesson.clone(),
                 interview: a.interview.clone(),
                 elapsed: a.seconds(),
                 hints: a.hints,
                 shown_hints: Some(self.show_hints),
+                recorded: a.recorded,
+                evaluation: self.feedback.as_ref().map(|f| f.eval.clone()),
+                choice: a.choice,
+                picked: a.picked,
                 keys: self.keys.clone(),
                 query: a.query.clone(),
             }),
@@ -380,6 +409,7 @@ impl LearningApp {
         self.show_hints = 0;
         self.active = Some(Active {
             task,
+            document_uid: self.sheet.session.doc()?.uid,
             lesson,
             interview,
             slot,
@@ -501,6 +531,9 @@ impl LearningApp {
 
     /// Speed run: ten tasks against the clock (one skill, or a mix).
     pub fn start_sprint(&mut self, skill: Option<&str>) -> Result<(), LearnError> {
+        if skill.map_or_else(|| self.profile.sprint_skills().is_empty(), |id| !self.profile.sprint_ready(id)) {
+            return Err(LearnError::Invalid(ts("Сначала реши три задания подряд без ошибок и подсказок на уровне 2 или выше").into()));
+        }
         let lesson = self.profile.plan_sprint(skill);
         self.streak_extended = false;
         self.screen = Screen::Lesson;
@@ -654,6 +687,7 @@ impl LearningApp {
     }
 
     pub fn submit_case(&mut self, timed_out: bool) -> Result<(), LearnError> {
+        self.require_exercise_document()?;
         let Some(a) = self.active.take() else { return Ok(()) };
         let eval = evaluate(&a.task, &self.sheet.session, &self.keys)?;
         let seconds = a.seconds();
@@ -672,6 +706,7 @@ impl LearningApp {
 
     /// Grades the current drill. The first evaluation sets XP and the staircase.
     pub fn check(&mut self) -> Result<(), LearnError> {
+        self.require_exercise_document()?;
         let Some(a) = self.active.as_ref() else { return Ok(()) };
         let eval = if a.task.sql.is_some() { sql::evaluate(&a.task, &a.query)? } else { evaluate(&a.task, &self.sheet.session, &self.keys)? };
         self.graded_revision = self.revision();
@@ -714,6 +749,9 @@ impl LearningApp {
         };
         if first {
             let task = a.task.clone();
+            if a.lesson.as_ref().is_none_or(|l| l.sprint.is_none() && !l.test_out) {
+                gridcraft_learn_core::diagnostics::record(&mut self.profile, &task, &self.sheet.session, &self.keys, &mut fb.eval)?;
+            }
             let change = self.profile.record(&task, passed, seconds, hints, combo, test_out, now());
             fb.xp = change.xp;
             fb.level_up = change.level_up;
@@ -982,7 +1020,7 @@ impl LearningApp {
 
     /// Explain committed formula errors even before the remaining answers are filled.
     pub fn observe_errors(&mut self) {
-        if self.screen != Screen::Lesson || self.sheet.editor.is_some() {
+        if self.screen != Screen::Lesson || self.sheet.editor.is_some() || !self.exercise_document_is_active() {
             return;
         }
         let Some(a) = self.active.as_ref() else { return };
@@ -1007,7 +1045,7 @@ impl LearningApp {
 
     /// Auto-check: once every answer cell is filled (or an action changed the sheet).
     fn auto_check(&mut self) {
-        if self.screen != Screen::Lesson || self.feedback.is_some() || self.sheet.editor.is_some() {
+        if self.screen != Screen::Lesson || self.feedback.is_some() || self.sheet.editor.is_some() || !self.exercise_document_is_active() {
             return;
         }
         let rev = self.revision();
@@ -1079,7 +1117,7 @@ impl LearningApp {
     /// Records shortcuts and takes Enter for the learning flow when a banner is up.
     pub fn raw_input_hook(&mut self, raw: &mut egui::RawInput) {
         let mut taken = Vec::new();
-        let in_task = matches!(self.screen, Screen::Lesson | Screen::Case);
+        let in_task = matches!(self.screen, Screen::Lesson | Screen::Case) && self.exercise_document_is_active();
         let editing = self.sheet.editor.is_some();
         let choosing = self.active.as_ref().is_some_and(|a| a.choosing().is_some());
         for (i, e) in raw.events.iter().enumerate() {

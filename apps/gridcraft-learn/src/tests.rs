@@ -121,7 +121,7 @@ fn russian_formula_typed_into_the_grid_passes() {
 #[test]
 fn shortcuts_are_recorded_by_physical_key() {
     let mut app = LearningApp::new(None).unwrap();
-    app.screen = Screen::Lesson;
+    app.start_lesson(None).unwrap();
     let mut raw = egui::RawInput {
         events: vec![
             key(egui::Key::L, egui::Modifiers::CTRL | egui::Modifiers::SHIFT),
@@ -329,4 +329,119 @@ fn mentor_assistance_does_not_reveal_task_hints_after_restart() {
     assert_eq!(back.show_hints, 1);
     assert_eq!(back.active.as_ref().unwrap().hints, 2);
     let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn restarting_a_graded_drill_cannot_award_xp_or_record_it_twice() {
+    let path = std::env::temp_dir().join(format!("taskathlon-recorded-pass-{}.json", std::process::id()));
+    let _ = std::fs::remove_file(&path);
+    let mut app = LearningApp::new(Some(path.clone())).unwrap();
+    app.start_lesson(Some("fn.sum")).unwrap();
+    solve(&mut app);
+    app.check().unwrap();
+    let xp = app.profile.xp;
+    let attempts = app.profile.log.len();
+    let lesson_before = app.active.as_ref().unwrap().lesson.clone().unwrap();
+    assert!(xp > 0);
+    app.save().unwrap();
+    let mut resumed = LearningApp::new(Some(path.clone())).unwrap();
+    assert!(resumed.active.as_ref().unwrap().recorded);
+    assert!(resumed.feedback.as_ref().unwrap().passed);
+    resumed.check().unwrap();
+    assert_eq!(resumed.profile.xp, xp);
+    assert_eq!(resumed.profile.log.len(), attempts);
+    assert_eq!(resumed.feedback.as_ref().unwrap().xp, 0);
+    resumed.advance().unwrap();
+    let lesson_after = resumed.active.as_ref().unwrap().lesson.as_ref().unwrap();
+    assert_eq!(lesson_after.done, lesson_before.done + 1);
+    assert_eq!(lesson_after.retries, lesson_before.retries, "a restored pass must not enqueue a retry");
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn restarting_after_a_miss_keeps_the_correction_as_a_second_attempt() {
+    let path = std::env::temp_dir().join(format!("taskathlon-recorded-miss-{}.json", std::process::id()));
+    let _ = std::fs::remove_file(&path);
+    let mut app = LearningApp::new(Some(path.clone())).unwrap();
+    app.start_lesson(Some("fn.sum")).unwrap();
+    app.check().unwrap();
+    let xp = app.profile.xp;
+    let attempts = app.profile.log.len();
+    app.save().unwrap();
+    let mut resumed = LearningApp::new(Some(path.clone())).unwrap();
+    assert!(resumed.active.as_ref().unwrap().recorded);
+    assert!(!resumed.feedback.as_ref().unwrap().passed);
+    solve(&mut resumed);
+    resumed.check().unwrap();
+    assert!(resumed.feedback.as_ref().unwrap().corrected);
+    assert_eq!(resumed.profile.xp, xp);
+    assert_eq!(resumed.profile.log.len(), attempts);
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn restarting_preserves_an_unanswered_or_already_recorded_diagnosis_pick() {
+    let path = std::env::temp_dir().join(format!("taskathlon-choice-resume-{}.json", std::process::id()));
+    let _ = std::fs::remove_file(&path);
+    let mut app = LearningApp::new(Some(path.clone())).unwrap();
+    let skill = gridcraft_learn_core::errors::skill_id("#NAME?");
+    let task = Task::generate(&Spec::new(&skill, 1, 9)).unwrap();
+    app.screen = Screen::Lesson;
+    app.load(task, None, None, None).unwrap();
+    app.save().unwrap();
+    let mut resumed = LearningApp::new(Some(path.clone())).unwrap();
+    assert!(resumed.active.as_ref().unwrap().choosing().is_some());
+    assert!(resumed.active.as_ref().unwrap().picked.is_none());
+    resumed.pick_choice(0);
+    let total = resumed.profile.method_total;
+    let mut back = LearningApp::new(Some(path.clone())).unwrap();
+    assert_eq!(back.active.as_ref().unwrap().picked, Some(0));
+    back.pick_choice(1);
+    assert_eq!(back.profile.method_total, total, "restoring an answered question must not record a second pick");
+    back.next_choice();
+    back.save().unwrap();
+    let finished = LearningApp::new(Some(path.clone())).unwrap();
+    assert!(finished.active.as_ref().unwrap().choosing().is_none());
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn opening_another_workbook_cannot_grade_or_overwrite_the_exercise_save() {
+    let path = std::env::temp_dir().join(format!("taskathlon-document-resume-{}.json", std::process::id()));
+    let _ = std::fs::remove_file(&path);
+    let mut app = LearningApp::new(Some(path.clone())).unwrap();
+    app.start_lesson(Some("fn.sum")).unwrap();
+    let spec = app.active.as_ref().unwrap().task.spec.clone();
+    app.sheet.session.execute("cell.set", json!({"cell": "Z1", "value": "exercise draft"})).unwrap();
+    let original_index = app.sheet.session.active_index();
+    let original_uid = app.active.as_ref().unwrap().document_uid;
+    app.sheet.session.new_workbook();
+    app.sheet.session.execute("cell.set", json!({"cell": "Z1", "value": "external file"})).unwrap();
+    assert_ne!(app.sheet.session.active().unwrap().uid, original_uid);
+    assert!(app.check().is_err());
+    assert!(app.profile.log.is_empty());
+    assert!(app.active.is_some());
+    app.save().unwrap();
+    let resumed = LearningApp::new(Some(path.clone())).unwrap();
+    assert_eq!(resumed.active.as_ref().unwrap().task.spec, spec);
+    assert_eq!(
+        gridcraft_learn_core::sheet::value(&resumed.sheet.session, "Z1").unwrap(),
+        gridcraft_engine::core::Value::Text("exercise draft".into())
+    );
+    app.sheet.session.set_active(original_index);
+    solve(&mut app);
+    app.check().unwrap();
+    assert!(app.feedback.as_ref().unwrap().passed);
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn another_workbook_cannot_be_submitted_as_a_case() {
+    let mut app = LearningApp::new(None).unwrap();
+    app.start_case("case.payroll", false).unwrap();
+    app.sheet.session.new_workbook();
+    assert!(app.submit_case(false).is_err());
+    assert!(app.active.is_some());
+    assert!(app.profile.log.is_empty());
+    assert_eq!(app.screen, Screen::Case);
 }

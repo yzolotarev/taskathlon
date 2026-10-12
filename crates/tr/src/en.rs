@@ -2726,4 +2726,21 @@ pub static PAIRS: &[(&str, &str)] = &[
     ("Заполни жёлтые ячейки — верный ответ засчитается сам.", "Fill the yellow cells; a correct answer is accepted automatically."),
     ("СДАТЬ ОТВЕТ", "SUBMIT ANSWER"),
     ("ПРОВЕРИТЬ", "CHECK"),
+    ("Вернись к учебной книге, чтобы проверить задание", "Return to the exercise workbook to check your answer"),
+    (
+        "Сначала реши три задания подряд без ошибок и подсказок на уровне 2 или выше",
+        "First solve three tasks in a row without mistakes or hints at level 2 or higher",
+    ),
+    (
+        "Откроется после трёх правильных ответов подряд без подсказок на уровне 2 или выше.",
+        "Unlocks after three correct answers in a row without hints at level 2 or higher.",
+    ),
+    ("Отдельные действия: точность первой попытки", "Individual actions: first-attempt accuracy"),
+    ("Знаки сравнения", "Comparison operators"),
+    ("Заполнение Ctrl+D", "Fill down with Ctrl+D"),
+    ("Заполнение столбца", "Fill a column"),
+    (
+        "{}: знак сравнения развёрнут. Проверь, какая величина должна быть меньше, а какая больше.",
+        "{}: the comparison operator is reversed. Check which value should be smaller and which should be larger.",
+    ),
 ];

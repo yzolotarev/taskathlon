@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 use gridcraft_learn::LearningApp;
+mod native;
 
 struct Host(LearningApp);
 impl eframe::App for Host {
@@ -31,7 +32,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Called by the daily timer: one notification, no window.
         return gridcraft_learn::remind::run(&base, gridcraft_learn::now()).map_err(Into::into);
     }
-    let app = LearningApp::new(Some(base))?;
+    let mut app = LearningApp::new(Some(base))?;
+    app.sheet.services = native::services();
     eframe::run_native(
         "Taskathlon",
         eframe::NativeOptions {
