@@ -398,6 +398,9 @@ pub struct Lesson {
     pub retries: u8,
     pub seconds: f32,
     pub level_ups: Vec<String>,
+    /// Skills actually submitted in this lesson; preserved across restart.
+    #[serde(default)]
+    pub practised: Vec<String>,
     /// Speed run: "mix" or a skill id. Passes advance at once; the clock is what counts.
     #[serde(default)]
     pub sprint: Option<String>,

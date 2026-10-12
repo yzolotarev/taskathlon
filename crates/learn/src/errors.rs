@@ -46,6 +46,24 @@ pub fn explanation(code: &str) -> &'static str {
     }
 }
 
+/// A first step to inspect; the full explanation remains available on request.
+pub fn short_explanation(code: &str) -> &'static str {
+    match code {
+        "#NAME?" => ts("Проверь название функции или диапазона."),
+        "#DIV/0!" => ts("Проверь делитель: он не должен быть нулём или пустым."),
+        "#VALUE!" => ts("Проверь тип данных: для расчёта может требоваться число."),
+        "#REF!" => ts("Проверь ссылки на удалённые или перемещённые ячейки."),
+        "#NUM!" => ts("Проверь допустимые значения числовых аргументов."),
+        "#N/A" => ts("Проверь ключ и диапазон поиска."),
+        "#NULL!" => ts("Проверь разделители и пересечение диапазонов."),
+        "#SPILL!" => ts("Проверь, свободны ли ячейки для результата массива."),
+        "#CALC!" => ts("Проверь условия и возможность пустого результата."),
+        "#CIRC!" => ts("Проверь, не ссылается ли формула на саму себя."),
+        "#GETTING_DATA" => ts("Дождись загрузки и проверь источник данных."),
+        _ => ts("Проверь формулу и её исходные данные."),
+    }
+}
+
 pub fn discover(profile: &mut Profile, task: &Task, session: &Session) -> Vec<Encounter> {
     if task.spec.skill.starts_with("errors.") || task.sql.is_some() {
         return Vec::new();

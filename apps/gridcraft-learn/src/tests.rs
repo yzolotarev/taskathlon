@@ -445,3 +445,47 @@ fn another_workbook_cannot_be_submitted_as_a_case() {
     assert!(app.profile.log.is_empty());
     assert_eq!(app.screen, Screen::Case);
 }
+
+#[test]
+fn a_filled_wrong_answer_waits_for_explicit_check_and_enter_returns_to_editing() {
+    let mut app = LearningApp::new(None).unwrap();
+    app.start_lesson(Some("fn.sum")).unwrap();
+    let cell = app.active.as_ref().unwrap().task.answer_cells()[0].clone();
+    let spec = app.active.as_ref().unwrap().task.spec.clone();
+    app.sheet.run("cell.set", json!({"cell": cell, "input": "=0"})).unwrap();
+    let mut h = harness(app);
+    h.run_steps(4);
+    assert!(h.state().feedback.is_none(), "filling a wrong answer is still editing, not a submission");
+    assert!(h.state().profile.log.is_empty());
+    assert_eq!(h.state().profile.xp, 0);
+    press(&mut h, egui::Key::Enter, egui::Modifiers::CTRL);
+    assert!(!h.state().feedback.as_ref().unwrap().passed);
+    assert_eq!(h.state().profile.log.len(), 1);
+    press(&mut h, egui::Key::Enter, egui::Modifiers::NONE);
+    assert!(h.state().feedback.is_none(), "Enter follows the primary Fix action");
+    assert_eq!(h.state().active.as_ref().unwrap().task.spec, spec);
+    assert_eq!(h.state().active.as_ref().unwrap().lesson.as_ref().unwrap().done, 0);
+    solve(h.state_mut());
+    h.run_steps(4);
+    assert!(h.state().feedback.as_ref().unwrap().corrected);
+    assert_eq!(h.state().profile.log.len(), 1, "correction must preserve first-attempt grading");
+    press(&mut h, egui::Key::Enter, egui::Modifiers::NONE);
+    assert_ne!(h.state().active.as_ref().unwrap().task.spec, spec);
+}
+
+#[test]
+fn lesson_summary_names_only_skills_actually_submitted() {
+    let mut app = LearningApp::new(None).unwrap();
+    app.start_lesson(Some("fn.sum")).unwrap();
+    solve(&mut app);
+    app.check().unwrap();
+    assert_eq!(app.active.as_ref().unwrap().lesson.as_ref().unwrap().practised, vec!["fn.sum"]);
+    app.advance().unwrap();
+    for _ in 0..30 {
+        if app.screen != Screen::Lesson {
+            break;
+        }
+        app.advance().unwrap();
+    }
+    assert_eq!(app.summary.as_ref().unwrap().practised, vec!["fn.sum"]);
+}

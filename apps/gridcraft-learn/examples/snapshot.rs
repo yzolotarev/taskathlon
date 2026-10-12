@@ -15,8 +15,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     match which.as_str() {
         "lesson" => app.start_lesson(None)?,
-        "formula" | "mentor" => {
+        "formula" | "mentor" | "hints" => {
             app.start_lesson(Some("logic.andor"))?;
+            if which == "hints" {
+                for _ in 0..3 {
+                    app.hint();
+                }
+            }
             if which == "mentor" {
                 if let Some(cell) = app.active.as_ref().and_then(|a| a.task.answer_cells().first().cloned()) {
                     app.sheet.session.execute("cell.set", serde_json::json!({"cell": cell, "input": "=NO_SUCH_FUNCTION(1)"}))?;
@@ -32,11 +37,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             app.check()?;
         }
         "done" => {
-            app.start_lesson(None)?;
+            app.start_lesson(Some("fn.sum"))?;
             for _ in 0..12 {
                 if app.screen != Screen::Lesson {
                     break;
                 }
+                if let Some(active) = &app.active {
+                    let checks = active.task.checks.clone();
+                    for check in checks {
+                        if let gridcraft_learn_core::Kind::Formula { cell, reference, .. } = check.kind {
+                            app.sheet.session.execute("cell.set", serde_json::json!({"cell": cell, "input": reference}))?;
+                        }
+                    }
+                }
+                app.check()?;
                 app.advance()?;
             }
         }
@@ -128,6 +142,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
         _ => {}
+    }
+    if let Ok(zoom) = std::env::var("SNAP_ZOOM") {
+        if let Ok(percent) = zoom.parse::<u16>() {
+            if app.active.is_some() {
+                app.sheet.session.execute("view.zoom", serde_json::json!({"percent": percent}))?;
+            }
+        }
     }
     let width = std::env::var("SNAP_WIDTH").ok().and_then(|s| s.parse::<f32>().ok()).unwrap_or(1280.0);
     let height = std::env::var("SNAP_HEIGHT").ok().and_then(|s| s.parse::<f32>().ok()).unwrap_or(820.0);

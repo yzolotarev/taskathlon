@@ -154,6 +154,7 @@ pub struct Summary {
     pub seconds: f32,
     pub best_combo: u32,
     pub level_ups: Vec<String>,
+    pub practised: Vec<String>,
     pub streak: u32,
     pub streak_extended: bool,
 }
@@ -638,12 +639,14 @@ impl LearningApp {
             seconds: lesson.seconds,
             best_combo: lesson.best_combo,
             level_ups: lesson.level_ups.clone(),
+            practised: lesson.practised.clone(),
             streak: self.profile.current_streak(now()),
             streak_extended: self.streak_extended,
         });
         self.active = None;
         self.feedback = None;
         self.screen = Screen::Done;
+        self.pop = None;
         self.done_since = Some(self.time());
         self.pending_confetti = true;
         self.cue(Cue::Complete);
@@ -761,6 +764,9 @@ impl LearningApp {
             if let Some(a) = self.active.as_mut() {
                 a.recorded = true;
                 if let Some(l) = a.lesson.as_mut() {
+                    if !l.practised.contains(&task.spec.skill) {
+                        l.practised.push(task.spec.skill.clone());
+                    }
                     l.xp += change.xp;
                     l.seconds += seconds;
                     if passed {
@@ -989,6 +995,11 @@ impl LearningApp {
         self.next_in_lesson(lesson)
     }
 
+    pub(crate) fn feedback_can_fix(&self) -> bool {
+        self.feedback.as_ref().is_some_and(|f| !f.passed)
+            && self.active.as_ref().is_some_and(|a| a.lesson.as_ref().is_none_or(|l| l.sprint.is_none()))
+    }
+
     pub fn fix(&mut self) {
         self.feedback = None;
         self.graded_revision = self.revision();
@@ -1073,8 +1084,13 @@ impl LearningApp {
             .iter()
             .all(|c| gridcraft_learn_core::sheet::value(&self.sheet.session, c).is_ok_and(|v| !matches!(v, gridcraft_engine::core::Value::Empty)));
         if filled {
-            let r = self.check();
-            self.handle(r);
+            match evaluate(&a.task, &self.sheet.session, &self.keys) {
+                Ok(e) if e.passed() => {
+                    let r = self.check();
+                    self.handle(r);
+                }
+                _ => self.graded_revision = rev,
+            }
         }
     }
 
@@ -1211,8 +1227,12 @@ impl LearningApp {
             }
             Screen::Lesson => {
                 if enter && self.feedback.is_some() {
-                    let r = self.advance();
-                    self.handle(r);
+                    if self.feedback_can_fix() {
+                        self.fix();
+                    } else {
+                        let r = self.advance();
+                        self.handle(r);
+                    }
                 } else if ctrl_enter && self.feedback.is_none() {
                     if self.active.as_ref().is_some_and(|a| a.task.sql.is_some()) {
                         self.run_sql();
@@ -1306,7 +1326,9 @@ impl LearningApp {
             view::draw_pop(&ctx, &p.text, p.color, ((t - p.born) / 1.4) as f32);
         }
         self.toasts.retain(|x| t - x.born < 5.0);
-        view::draw_toasts(&ctx, &self.toasts, t, &view::palette(self.sheet.ui.dark));
+        if self.screen != Screen::Done {
+            view::draw_toasts(&ctx, &self.toasts, t, &view::palette(self.sheet.ui.dark));
+        }
         if self.pop.is_some() || !self.toasts.is_empty() {
             ctx.request_repaint();
         }
