@@ -424,6 +424,9 @@ fn english_mode_shows_no_russian() {
                 if let Some(b) = &t.brief {
                     all.push(format!("{b:?}"));
                 }
+                let mut choices = t.choices.clone();
+                choices.extend(crate::content::recognition(&t.spec));
+                all.push(format!("{choices:?}"));
                 for (_, c, ..) in &t.setup.cells {
                     all.push(format!("{c:?}"));
                 }
@@ -451,4 +454,24 @@ fn english_mode_shows_no_russian() {
     }
     gridcraft_tr::set_english_here(None);
     assert!(bad.is_empty(), "Russian left in English mode: {bad:#?}");
+}
+
+#[test]
+fn method_questions_have_a_right_answer() {
+    for sk in SKILLS {
+        if let Some(c) = crate::content::recognition(&Spec::new(sk.id, 3, 4)) {
+            assert_eq!(c.options.len(), 4, "{}", sk.id);
+            assert_eq!(c.options.iter().filter(|o| o.ok).count(), 1, "{}", sk.id);
+        }
+    }
+    for c in CASES {
+        let task = Task::generate(&Spec::new(c.id, 2, 1)).unwrap();
+        let q = task.choices.first().unwrap_or_else(|| panic!("{} has no method question", c.id));
+        assert!(q.options.iter().any(|o| o.ok) && q.options.iter().any(|o| !o.ok), "{}", c.id);
+    }
+    let mut p = Profile::default();
+    p.record_choice("cond.sumif", false);
+    p.record_choice("", true);
+    assert_eq!((p.method_right, p.method_total), (1, 2));
+    assert!(p.remediation.contains(&"cond.sumif".to_string()));
 }

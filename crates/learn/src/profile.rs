@@ -84,6 +84,11 @@ pub struct Profile {
     /// English interface instead of Russian.
     #[serde(default)]
     pub english: bool,
+    /// "Which method" questions: answered right on the first pick / asked.
+    #[serde(default)]
+    pub method_right: u32,
+    #[serde(default)]
+    pub method_total: u32,
     /// Currency for streak freezes and wagers.
     pub gems: u32,
     pub freezes: u8,
@@ -243,6 +248,8 @@ impl Default for Profile {
             sound: true,
             dark: false,
             english: false,
+            method_right: 0,
+            method_total: 0,
             gems: 50,
             freezes: 0,
             frozen_days: Vec::new(),
@@ -628,6 +635,17 @@ impl Profile {
 
     /// A finished blitz: XP by points, quest and badge.
     /// One solved task in the accounting program: base XP plus a speed bonus against par.
+    /// The first pick on a "which method" question. A wrong tool sends its skill back for practice.
+    pub fn record_choice(&mut self, skill: &str, ok: bool) {
+        self.method_total += 1;
+        if ok {
+            self.method_right += 1;
+        } else if SKILLS.iter().any(|s| s.id == skill) && !self.remediation.iter().any(|m| m == skill) {
+            self.remediation.push(skill.into());
+            self.remediation.truncate(6);
+        }
+    }
+
     pub fn record_ledger_task(&mut self, seconds: f32, goal_seconds: u32, now: u64) -> Change {
         let mut change = Change::default();
         let ratio = seconds / goal_seconds.max(1) as f32;

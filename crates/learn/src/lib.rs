@@ -82,6 +82,26 @@ pub struct Task {
     /// SQL drills: the database and reference query (the sheet only shows the tables).
     #[serde(default)]
     pub sql: Option<sql::SqlTask>,
+    /// Questions before the work: which tool fits and why.
+    #[serde(default)]
+    pub choices: Vec<Choice>,
+}
+
+/// A "which method and why" question asked before a task.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Choice {
+    pub question: String,
+    pub options: Vec<ChoiceOption>,
+    /// The skill to practise when the pick is wrong (empty for method questions).
+    pub skill: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ChoiceOption {
+    pub text: String,
+    pub ok: bool,
+    /// Shown after the pick.
+    pub why: String,
 }
 
 impl Task {

@@ -36,6 +36,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             app.submit_case(false)?;
         }
         "stats" => app.screen = Screen::Stats,
+        "choice" | "choicepicked" => {
+            app.start_lesson(Some("cond.sumif"))?;
+            if let Some(a) = app.active.as_mut() {
+                a.task.spec.level = 3;
+                a.task.choices = gridcraft_learn_core::content::recognition(&a.task.spec).into_iter().collect();
+            }
+            if which == "choicepicked" {
+                app.pick_choice(0);
+            }
+        }
         "sql" => {
             app.start_lesson(Some("sql.group"))?;
             if let Some(a) = app.active.as_mut() {

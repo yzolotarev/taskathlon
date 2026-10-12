@@ -462,6 +462,7 @@ pub fn lesson(app: &mut LearningApp, ui: &mut Ui) {
     let slot = a.slot.clone();
     let task = a.task.clone();
     let hints_used = a.hints;
+    let choosing = a.choosing().is_some();
     let mut quit = false;
     egui::Panel::top("lesson_top").frame(egui::Frame::NONE.fill(p.bg).inner_margin(egui::Margin::symmetric(20, 10))).show(ui, |ui| {
         ui.horizontal(|ui| {
@@ -504,7 +505,9 @@ pub fn lesson(app: &mut LearningApp, ui: &mut Ui) {
                     _ => (ts("ТРЕНИРОВКА"), Color32::WHITE, p.green_dark),
                 };
                 chip(ui, tag, fg, bg);
-                chip(ui, &task.skill_name(), p.text, p.card);
+                if !choosing {
+                    chip(ui, &task.skill_name(), p.text, p.card);
+                }
                 chip(ui, &tr(&format!("Уровень {}: {}", task.spec.level, level_name(task.spec.level))), p.muted, p.card);
                 if !task.keys().is_empty() {
                     chip(ui, &format!("⌨ {}", task.keys().join(", ")), p.text, Color32::from_rgb(255, 236, 179));
@@ -544,6 +547,9 @@ pub fn lesson(app: &mut LearningApp, ui: &mut Ui) {
                 ui.label(RichText::new(format!("🤖 {ai}")).color(p.blue_dark));
             }
             ui.add_space(4.0);
+            if choice_card(app, ui, &p, true) {
+                return;
+            }
             ui.horizontal(|ui| {
                 let can_hint = (hints_used as usize) < task.hints.len() && app.feedback.is_none();
                 if ui.add_enabled(can_hint, egui::Button::new(tr(&format!("💡 Подсказка ({}/{})", hints_used, task.hints.len())))).clicked()
@@ -581,6 +587,10 @@ pub fn lesson(app: &mut LearningApp, ui: &mut Ui) {
     }
     feedback_banner(app, ui, &p);
     if app.screen != Screen::Lesson {
+        return;
+    }
+    if app.active.as_ref().is_some_and(|a| a.choosing().is_some()) {
+        // The sheet appears after the choice, so typing 1–4 never lands in a cell.
         return;
     }
     if task.sql.is_some() {
@@ -794,6 +804,9 @@ pub fn case(app: &mut LearningApp, ui: &mut Ui) {
     }
     egui::Panel::left("case_brief").exact_size(340.0).frame(egui::Frame::NONE.fill(p.card).inner_margin(egui::Margin::same(16))).show(ui, |ui| {
         egui::ScrollArea::vertical().show(ui, |ui| {
+            if choice_card(app, ui, &p, false) {
+                ui.add_space(10.0);
+            }
             if let Some(b) = &task.brief {
                 egui::Frame::NONE.fill(p.bg).stroke(Stroke::new(1.0, p.border)).corner_radius(10.0).inner_margin(egui::Margin::same(12)).show(
                     ui,
@@ -1187,6 +1200,71 @@ pub fn blitz(app: &mut LearningApp, ui: &mut Ui) {
     } else if next {
         app.blitz_next();
     }
+}
+
+/// The "which method and why" card. Returns true while it is on screen.
+fn choice_card(app: &mut LearningApp, ui: &mut Ui, p: &Palette, wide: bool) -> bool {
+    let Some(a) = app.active.as_ref() else { return false };
+    let Some(c) = a.choosing().cloned() else { return false };
+    let picked = a.picked;
+    let (step, steps) = (a.choice + 1, a.task.choices.len());
+    let mut pick = None;
+    let mut next = false;
+    egui::Frame::NONE.fill(p.card).stroke(Stroke::new(2.0, p.blue)).corner_radius(12.0).inner_margin(egui::Margin::same(12)).show(ui, |ui| {
+        ui.set_width(ui.available_width());
+        let head = if steps > 1 { format!("{} ({step}/{steps})", c.question) } else { c.question.clone() };
+        ui.label(RichText::new(head).size(18.0).strong().color(p.text));
+        ui.add_space(6.0);
+        let w = if wide { ui.available_width().min(900.0) } else { ui.available_width() };
+        for (i, o) in c.options.iter().enumerate() {
+            let fill = match picked {
+                Some(_) if o.ok => p.green,
+                Some(k) if k == i => p.red,
+                _ => p.bg,
+            };
+            let fg = if picked.is_some() && (o.ok || picked == Some(i)) { Color32::WHITE } else { p.text };
+            let b = egui::Button::new(RichText::new(format!("{}. {}", i + 1, o.text)).size(15.0).color(fg)).fill(fill).wrap().min_size(vec2(w, 34.0));
+            let r = ui.add_enabled(picked.is_none() || o.ok || picked == Some(i), b);
+            if r.clicked() && picked.is_none() {
+                pick = Some(i);
+            }
+            // Keys only where the sheet is hidden, so typing into a cell never picks.
+            if wide && picked.is_none() && ui.input(|inp| inp.key_pressed(egui::Key::from_name(&(i + 1).to_string()).unwrap_or(egui::Key::Escape))) {
+                pick = Some(i);
+            }
+        }
+        if let Some(k) = picked
+            && let Some(o) = c.options.get(k)
+        {
+            ui.add_space(6.0);
+            let color = if o.ok { p.green_dark } else { p.red };
+            ui.label(RichText::new(format!("{} {}", if o.ok { "✔" } else { "✗" }, o.why)).size(15.0).color(color));
+            if !o.ok
+                && let Some(right) = c.options.iter().find(|o| o.ok)
+            {
+                ui.label(RichText::new(&right.why).size(14.0).color(p.text));
+            }
+            ui.add_space(4.0);
+            let label = if wide { ts("Дальше  (Enter)") } else { ts("Дальше") };
+            if ui.button(RichText::new(label).size(15.0)).clicked() || (wide && ui.input(|i| i.key_pressed(egui::Key::Enter))) {
+                next = true;
+            }
+        } else {
+            let note = if wide {
+                ts("Выбери вариант мышью или клавишами 1–4.")
+            } else {
+                ts("Сначала выбери способ — потом решай.")
+            };
+            ui.label(RichText::new(note).size(12.0).color(p.muted));
+        }
+    });
+    if let Some(i) = pick {
+        app.pick_choice(i);
+    }
+    if next {
+        app.next_choice();
+    }
+    true
 }
 
 fn option_button(ui: &mut Ui, text: &str, p: &Palette, size: egui::Vec2) -> egui::Response {

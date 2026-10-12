@@ -131,6 +131,7 @@ fn finish(g: &mut Gen, id: &str, brief: Brief, deliverables: &[String], focus: S
     t.mode = Mode::Case;
     t.prompt = deliverables.iter().enumerate().map(|(i, d)| format!("{}. {d}", i + 1)).collect::<Vec<_>>().join("\n");
     t.brief = Some(brief);
+    t.choices = method_choice(id).into_iter().collect();
     t.goal_seconds = def.map(|d| d.minutes as f32 * 60.0).unwrap_or(900.0);
     t.hints = vec![
         ts("Разбей задачу: что именно нужно сдать? Ответы — в жёлтые ячейки.").into(),
@@ -1011,4 +1012,48 @@ pub fn recon(g: &mut Gen) -> Result<Task> {
         ts("M3 — чистое расхождение: наша сумма минус их сумма (без строки «Итого»).").into(),
     ];
     Ok(finish(g, "case.recon", brief, &deliverables, "L2".into()))
+}
+
+/// The methods a case can be solved with.
+const METHODS: [&str; 4] = ["Формулы", "Сводная таблица", "Фильтр и ручной подсчёт", "SQL-запрос"];
+
+/// For each case: which methods fit (by index in [`METHODS`]) and why.
+const METHOD_FIT: &[(&str, &[usize], &str)] = &[
+    ("case.sales", &[0, 1], "Итоги по менеджерам — классическая сводная. СУММЕСЛИ тоже подойдёт, если отчёт должен обновляться сам."),
+    ("case.payroll", &[0], "Ведомость должна пересчитываться, когда меняются дни, — это формулы со ссылками."),
+    ("case.bank", &[0], "Сверка по номеру платёжки — поиск значения в другой таблице: СЧЁТЕСЛИ или ПРОСМОТРX."),
+    ("case.act", &[0], "Два списка документов сопоставляют по номеру формулой, итоги — СУММ."),
+    ("case.ar", &[0, 1], "Дни просрочки считает формула от дат, а итоги по контрагентам удобно собрать сводной или СУММЕСЛИМН."),
+    ("case.cleanup", &[0], "Текст из выгрузки чинят формулами (СЖПРОБЕЛЫ, ЗНАЧЕН), иначе итоги не посчитаются."),
+    ("case.purchase", &[0], "Минимум по строке и поставщик с этой ценой — МИН и ИНДЕКС+ПОИСКПОЗ."),
+    ("case.stock", &[0], "Остаток и признак «заказать» должны обновляться при новых движениях — формулы."),
+    ("case.budget", &[0], "Отклонение и статус по каждой статье — формулы, протянутые вниз."),
+    ("case.vacation", &[0, 1], "Дни отпуска считает формула от дат, итоги по отделам — сводная или СУММЕСЛИ."),
+    ("case.retail", &[0, 1], "Средний чек — формула, итоги по магазинам — сводная или СУММЕСЛИ."),
+    ("case.recon", &[0], "Документы двух таблиц сопоставляют по номеру: ПРОСМОТРX или СЧЁТЕСЛИ. Сводная не сведёт номера в разных форматах."),
+];
+
+/// "How will you solve it?" before a case. Data is on a sheet, so SQL never fits; filtering by
+/// hand does not survive new data.
+pub fn method_choice(id: &str) -> Option<crate::Choice> {
+    let (_, fit, why) = METHOD_FIT.iter().find(|(c, ..)| *c == id)?;
+    let options = METHODS
+        .iter()
+        .enumerate()
+        .map(|(i, m)| {
+            let ok = fit.contains(&i);
+            let extra = match i {
+                2 if !ok => ts("Руками долго, и при новых данных всё придётся делать заново."),
+                3 => ts("Данные лежат на листе Excel, а не в базе — SQL тут не к месту."),
+                _ => "",
+            };
+            let why = if ok {
+                tr(&format!("Подходит. {}", ts(why)))
+            } else {
+                tr(&format!("Не лучший способ. {} {}", ts(why), extra)).trim().to_string()
+            };
+            crate::ChoiceOption { text: ts(m).into(), ok, why }
+        })
+        .collect();
+    Some(crate::Choice { question: ts("Как будешь решать?").into(), options, skill: String::new() })
 }

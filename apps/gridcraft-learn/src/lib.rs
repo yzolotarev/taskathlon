@@ -103,9 +103,17 @@ pub struct Active {
     /// SQL drills: the query being written and the last run.
     pub query: String,
     pub sql_result: Option<Result<ResultSet, String>>,
+    /// The "which method" question on screen (index into `task.choices`) and the pick made.
+    pub choice: usize,
+    pub picked: Option<usize>,
 }
 
 impl Active {
+    /// A method question is waiting for an answer or for "Next".
+    pub fn choosing(&self) -> Option<&gridcraft_learn_core::Choice> {
+        self.task.choices.get(self.choice)
+    }
+
     pub fn seconds(&self) -> f32 {
         self.before + self.started.elapsed().as_secs_f32()
     }
@@ -279,8 +287,10 @@ impl LearningApp {
                 before: c.elapsed,
                 hints: c.hints,
                 recorded: false,
+                choice: usize::MAX,
                 query: c.query,
                 sql_result: None,
+                picked: None,
             });
             app.graded_revision = app.revision();
             app.apply_ribbon();
@@ -331,7 +341,12 @@ impl LearningApp {
         self.sheet.ui.ribbon_collapsed = !need;
     }
 
-    fn load(&mut self, task: Task, lesson: Option<Lesson>, interview: Option<Interview>, slot: Option<Slot>) -> Result<(), LearnError> {
+    fn load(&mut self, mut task: Task, lesson: Option<Lesson>, interview: Option<Interview>, slot: Option<Slot>) -> Result<(), LearnError> {
+        // Mixed and review tasks don't announce the skill: first decide which tool fits.
+        let sprint = lesson.as_ref().is_some_and(|l| l.sprint.is_some());
+        if !sprint && task.spec.level >= 3 && matches!(slot, Some(Slot::Mix(_)) | Some(Slot::Review(_))) {
+            task.choices = gridcraft_learn_core::content::recognition(&task.spec).into_iter().collect();
+        }
         let session = task.session()?;
         self.sheet.session = session;
         self.sheet.views.clear();
@@ -351,10 +366,39 @@ impl LearningApp {
             recorded: false,
             query: String::new(),
             sql_result: None,
+            choice: 0,
+            picked: None,
         });
         self.graded_revision = self.revision();
         self.apply_ribbon();
         Ok(())
+    }
+
+    /// The learner picks an option of the current method question.
+    pub fn pick_choice(&mut self, i: usize) {
+        let Some(a) = self.active.as_mut() else { return };
+        if a.picked.is_some() {
+            return;
+        }
+        let Some(c) = a.task.choices.get(a.choice) else { return };
+        let ok = c.options.get(i).is_some_and(|o| o.ok);
+        let skill = c.skill.clone();
+        a.picked = Some(i);
+        self.profile.record_choice(&skill, ok);
+        self.cue(if ok { Cue::Correct } else { Cue::Wrong });
+        let r = self.save();
+        self.handle(r);
+    }
+
+    /// On to the next method question, or to the task itself; the task's clock starts now.
+    pub fn next_choice(&mut self) {
+        let Some(a) = self.active.as_mut() else { return };
+        a.choice = a.choice.saturating_add(1);
+        a.picked = None;
+        if a.choice >= a.task.choices.len() && a.task.mode == Mode::Drill {
+            a.started = instant();
+            a.before = 0.0;
+        }
     }
 
     /// Speed run: ten tasks against the clock (one skill, or a mix).
@@ -861,6 +905,7 @@ impl LearningApp {
         let mut taken = Vec::new();
         let in_task = matches!(self.screen, Screen::Lesson | Screen::Case);
         let editing = self.sheet.editor.is_some();
+        let choosing = self.active.as_ref().is_some_and(|a| a.choosing().is_some());
         for (i, e) in raw.events.iter().enumerate() {
             let egui::Event::Key { key, physical_key, pressed: true, modifiers, .. } = e else { continue };
             if in_task
@@ -881,7 +926,7 @@ impl LearningApp {
                         self.enter = true;
                         taken.push(i);
                     }
-                    Screen::Lesson if ctrl && !editing => {
+                    Screen::Lesson if ctrl && !editing && !choosing => {
                         self.ctrl_enter = true;
                         taken.push(i);
                     }

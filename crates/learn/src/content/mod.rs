@@ -620,6 +620,7 @@ impl Gen {
             reorders: false,
             brief: None,
             sql: None,
+            choices: Vec::new(),
         }
     }
 
@@ -661,4 +662,41 @@ impl Gen {
 
 pub fn letter(col: u32) -> String {
     col_name(col)
+}
+
+/// Units whose skills are tools a learner has to pick by the situation.
+const TOOL_UNITS: [usize; 7] = [2, 3, 4, 5, 6, 7, 11];
+
+/// "Which tool and why": the task's own skill and three look-alikes, each with its idea as the
+/// reason. Asked before mixed and review tasks, when the skill is not announced.
+pub fn recognition(spec: &Spec) -> Option<crate::Choice> {
+    let own = skill(&spec.skill)?;
+    if !TOOL_UNITS.contains(&own.unit) {
+        return None;
+    }
+    let mut r = crate::rng::Rng::new(spec.layout.wrapping_mul(31).wrapping_add(7));
+    let mut same: Vec<&Skill> = SKILLS.iter().filter(|s| s.unit == own.unit && s.id != own.id && s.name != own.name).collect();
+    let mut other: Vec<&Skill> =
+        SKILLS.iter().filter(|s| s.unit != own.unit && TOOL_UNITS.contains(&s.unit) && (own.unit == 11) == (s.unit == 11)).collect();
+    r.shuffle(&mut same);
+    r.shuffle(&mut other);
+    // Two look-alikes from the same unit, one from elsewhere; top up from either if short.
+    let mut picks: Vec<&Skill> = same.iter().copied().take(2).collect();
+    picks.extend(other.iter().copied().take(3 - picks.len()));
+    picks.extend(same.iter().copied().skip(2).take(3 - picks.len()));
+    picks.push(own);
+    r.shuffle(&mut picks);
+    let options = picks
+        .iter()
+        .map(|s| crate::ChoiceOption {
+            text: format!("{} — {}", ts(s.name), ts(s.idea)),
+            ok: s.id == own.id,
+            why: if s.id == own.id {
+                tr(&format!("Да: {}", ts(s.idea)))
+            } else {
+                tr(&format!("{} здесь не то: {}", ts(s.name), ts(s.idea)))
+            },
+        })
+        .collect();
+    Some(crate::Choice { question: ts("Чем решишь и почему?").into(), options, skill: own.id.into() })
 }
