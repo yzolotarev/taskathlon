@@ -33,8 +33,9 @@ impl Rng {
     pub fn chance(&mut self, percent: u64) -> bool {
         self.next_u64() % 100 < percent
     }
-    pub fn pick<'a>(&mut self, items: &[&'a str]) -> &'a str {
-        items.get(self.below(items.len())).copied().unwrap_or("")
+    /// A random item, in the interface language.
+    pub fn pick(&mut self, items: &[&'static str]) -> &'static str {
+        items.get(self.below(items.len())).copied().map(gridcraft_tr::ts).unwrap_or("")
     }
     pub fn shuffle<T>(&mut self, items: &mut [T]) {
         for i in (1..items.len()).rev() {
@@ -42,9 +43,9 @@ impl Rng {
             items.swap(i, j);
         }
     }
-    /// `n` distinct items in random order (fewer if the pool is smaller).
-    pub fn sample<'a>(&mut self, items: &[&'a str], n: usize) -> Vec<&'a str> {
-        let mut v = items.to_vec();
+    /// `n` distinct items in random order (fewer if the pool is smaller), in the interface language.
+    pub fn sample(&mut self, items: &[&'static str], n: usize) -> Vec<&'static str> {
+        let mut v: Vec<&'static str> = items.iter().copied().map(gridcraft_tr::ts).collect();
         self.shuffle(&mut v);
         v.truncate(n);
         v

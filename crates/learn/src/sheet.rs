@@ -159,7 +159,8 @@ pub fn swap_data(wb: &Workbook, old: &Setup, data: &Setup) -> Result<Session> {
 /// Canonical formula → Russian Excel spelling (`SUMIF(A1:A3,"x")` → `СУММЕСЛИ(A1:A3;"x")`).
 pub fn ru(formula: &str) -> String {
     let body = formula.strip_prefix('=').unwrap_or(formula);
-    match parse(body).and_then(|e| print_input(&e, FormulaLocale::Ru, |_| false)) {
+    let locale = if gridcraft_tr::english() { FormulaLocale::En } else { FormulaLocale::Ru };
+    match parse(body).and_then(|e| print_input(&e, locale, |_| false)) {
         Ok(text) => format!("={text}"),
         Err(_) => formula.to_string(),
     }

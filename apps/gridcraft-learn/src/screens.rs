@@ -341,7 +341,7 @@ pub fn home(app: &mut LearningApp, ui: &mut Ui) {
                             .map(|c| {
                                 (
                                     c.id.to_string(),
-                                    c.title.to_string(),
+                                    ts(c.title).to_string(),
                                     app.profile.case_open(c.id),
                                     app.profile.cases.get(c.id).map(|x| (x.best * 4.0) as u8).unwrap_or(0),
                                     true,

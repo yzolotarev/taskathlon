@@ -20,8 +20,17 @@ pub fn set_english(on: bool) {
     }
 }
 
+thread_local! {
+    static HERE: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
+}
+
+/// Overrides the language for the current thread only (tests run languages side by side).
+pub fn set_english_here(on: Option<bool>) {
+    HERE.with(|h| h.set(on));
+}
+
 pub fn english() -> bool {
-    ENGLISH.load(Ordering::Relaxed)
+    HERE.with(|h| h.get()).unwrap_or_else(|| ENGLISH.load(Ordering::Relaxed))
 }
 
 struct Tables {
@@ -89,19 +98,42 @@ fn translate(s: &str) -> String {
     }
     for (parts, en) in &tb.templates {
         if let Some(caps) = captures(parts, s) {
-            let mut out = String::with_capacity(en.len() + s.len());
-            let mut caps = caps.into_iter();
-            for (i, piece) in en.split("{}").enumerate() {
-                if i > 0 {
-                    let c = caps.next().unwrap_or("");
-                    out.push_str(tb.exact.get(c).copied().unwrap_or(c));
-                }
-                out.push_str(piece);
-            }
-            return out;
+            return fill(en, &caps, &tb.exact);
         }
     }
     s.to_string()
+}
+
+/// Puts the captures into an English template: `{}` takes the next one, `{N}` takes number N.
+fn fill(en: &str, caps: &[&str], exact: &HashMap<&'static str, &'static str>) -> String {
+    let mut out = String::with_capacity(en.len() * 2);
+    let mut next = 0;
+    let mut rest = en;
+    while let Some(open) = rest.find('{') {
+        out.push_str(rest.get(..open).unwrap_or(""));
+        let after = rest.get(open + 1..).unwrap_or("");
+        let Some(close) = after.find('}') else {
+            out.push_str(rest.get(open..).unwrap_or(""));
+            return out;
+        };
+        let inside = after.get(..close).unwrap_or("");
+        let index = if inside.is_empty() {
+            next += 1;
+            Some(next - 1)
+        } else {
+            inside.parse::<usize>().ok()
+        };
+        match index {
+            Some(i) => {
+                let c = caps.get(i).copied().unwrap_or("");
+                out.push_str(exact.get(c).copied().unwrap_or(c));
+            }
+            None => out.push_str(rest.get(open..open + close + 2).unwrap_or("")),
+        }
+        rest = after.get(close + 1..).unwrap_or("");
+    }
+    out.push_str(rest);
+    out
 }
 
 /// Translates a formatted string.
@@ -134,6 +166,8 @@ mod tests {
         assert_eq!(t("Цель дня: 30 / 50 XP"), "Daily goal: 30 / 50 XP");
         assert_eq!(t("Уровень 2: С подсказкой"), "Level 2: With a hint");
         assert_eq!(t("нет такого"), "нет такого");
+        let exact = HashMap::new();
+        assert_eq!(fill("{1} of {0}", &["a", "b"], &exact), "b of a");
         set_english(false);
         assert_eq!(ts("Настройки"), "Настройки");
         assert_eq!(t("Цель дня: 30 / 50 XP"), "Цель дня: 30 / 50 XP");
@@ -142,7 +176,8 @@ mod tests {
     #[test]
     fn table_templates_have_matching_placeholders() {
         for (ru, en) in en::PAIRS {
-            assert_eq!(ru.matches("{}").count(), en.matches("{}").count(), "{ru} → {en}");
+            let slots = en.matches("{}").count() + (0..9).filter(|i| en.contains(&format!("{{{i}}}"))).count();
+            assert_eq!(ru.matches("{}").count(), slots, "{ru} → {en}");
         }
     }
 }

@@ -5,6 +5,7 @@
 use crate::rng::Rng;
 use crate::sheet::{date, date_text, num_text};
 use crate::sql::{self, SqlTable, SqlVal};
+use gridcraft_tr::{t as tr, ts};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -71,10 +72,10 @@ fn n(v: f64) -> String {
 const CITIES: &[&str] = &["Москва", "Казань", "Самара", "Тула"];
 
 fn mini_sales(r: &mut Rng) -> (Vec<Vec<String>>, Vec<(&'static str, f64)>) {
-    let mut rows = vec![vec!["".into(), "A".into(), "B".into()], vec!["1".into(), "Город".into(), "Сумма".into()]];
+    let mut rows = vec![vec!["".into(), "A".into(), "B".into()], vec!["1".into(), ts("Город").into(), ts("Сумма").into()]];
     let mut data = Vec::new();
     for i in 0..5 {
-        let c = CITIES.get(r.below(3)).copied().unwrap_or("Москва");
+        let c = CITIES.get(r.below(3)).copied().map(ts).unwrap_or(ts("Москва"));
         let v = (r.int(2, 40) * 500) as f64;
         rows.push(vec![(i + 2).to_string(), c.into(), n(v)]);
         data.push((c, v));
@@ -84,20 +85,20 @@ fn mini_sales(r: &mut Rng) -> (Vec<Vec<String>>, Vec<(&'static str, f64)>) {
 
 fn sumif(r: &mut Rng) -> Question {
     let (table, data) = mini_sales(r);
-    let city = data.first().map(|d| d.0).unwrap_or("Москва");
+    let city = data.first().map(|d| d.0).unwrap_or(ts("Москва"));
     let want: f64 = data.iter().filter(|d| d.0 == city).map(|d| d.1).sum();
     let all: f64 = data.iter().map(|d| d.1).sum();
     let cnt = data.iter().filter(|d| d.0 == city).count() as f64;
     let other: f64 = data.iter().filter(|d| d.0 != city).map(|d| d.1).sum();
     q(
         r,
-        "Формулы",
-        format!("Что вернёт =СУММЕСЛИ(A2:A6;\"{city}\";B2:B6)?"),
+        ts("Формулы"),
+        tr(&format!("Что вернёт =СУММЕСЛИ(A2:A6;\"{city}\";B2:B6)?")),
         table,
         vec![n(want), n(all), n(cnt), n(other)],
         35,
         "cond.sumif",
-        format!("Складываются суммы только строк с «{city}»: {}.", n(want)),
+        tr(&format!("Складываются суммы только строк с «{city}»: {}.", n(want))),
     )
 }
 
@@ -108,13 +109,13 @@ fn countif(r: &mut Rng) -> Question {
     let ge = data.iter().filter(|d| d.1 >= x).count();
     q(
         r,
-        "Формулы",
-        format!("Что вернёт =СЧЁТЕСЛИ(B2:B6;\">{}\")?", x as i64),
+        ts("Формулы"),
+        tr(&format!("Что вернёт =СЧЁТЕСЛИ(B2:B6;\">{}\")?", x as i64)),
         table,
         vec![want.to_string(), (5 - want).to_string(), (want + 1).to_string(), ge.max(want + 2).to_string()],
         30,
         "cond.countif",
-        format!("Считаются ячейки строго больше {}: их {want}.", x as i64),
+        tr(&format!("Считаются ячейки строго больше {}: их {want}.", x as i64)),
     )
 }
 
@@ -122,7 +123,7 @@ fn vlookup(r: &mut Rng) -> Question {
     let mut codes: Vec<i64> = (0..4).map(|i| 100 + i * 7 + r.int(0, 5)).collect();
     codes.sort();
     let prices: Vec<f64> = (0..4).map(|_| (r.int(10, 99) * 10) as f64).collect();
-    let mut table = vec![vec!["".into(), "D".into(), "E".into()], vec!["1".into(), "Код".into(), "Цена".into()]];
+    let mut table = vec![vec!["".into(), "D".into(), "E".into()], vec!["1".into(), ts("Код").into(), ts("Цена").into()]];
     for (i, (c, p)) in codes.iter().zip(&prices).enumerate() {
         table.push(vec![(i + 2).to_string(), c.to_string(), n(*p)]);
     }
@@ -130,13 +131,13 @@ fn vlookup(r: &mut Rng) -> Question {
         let missing = codes.last().copied().unwrap_or(120) + 3;
         return q(
             r,
-            "Формулы",
-            format!("Что вернёт =ВПР({missing};D2:E5;2;ЛОЖЬ)?"),
+            ts("Формулы"),
+            tr(&format!("Что вернёт =ВПР({missing};D2:E5;2;ЛОЖЬ)?")),
             table,
-            vec!["#Н/Д".into(), "0".into(), n(prices.last().copied().unwrap_or(0.0)), "#ЗНАЧ!".into()],
+            vec![ts("#Н/Д").into(), "0".into(), n(prices.last().copied().unwrap_or(0.0)), ts("#ЗНАЧ!").into()],
             35,
             "lookup.missing",
-            "Точный поиск (ЛОЖЬ) не нашёл код — ВПР возвращает #Н/Д. Лечится ЕСЛИОШИБКА.".into(),
+            ts("Точный поиск (ЛОЖЬ) не нашёл код — ВПР возвращает #Н/Д. Лечится ЕСЛИОШИБКА.").into(),
         );
     }
     let i = r.below(4);
@@ -145,13 +146,13 @@ fn vlookup(r: &mut Rng) -> Question {
     let next = prices.get((i + 1) % 4).copied().unwrap_or(0.0);
     q(
         r,
-        "Формулы",
-        format!("Что вернёт =ВПР({code};D2:E5;2;ЛОЖЬ)?"),
+        ts("Формулы"),
+        tr(&format!("Что вернёт =ВПР({code};D2:E5;2;ЛОЖЬ)?")),
         table,
-        vec![n(price), n(next), code.to_string(), "#Н/Д".into()],
+        vec![n(price), n(next), code.to_string(), ts("#Н/Д").into()],
         30,
         "lookup.vlookup",
-        format!("Код {code} найден в строке {}, второй столбец — цена {}.", i + 2, n(price)),
+        tr(&format!("Код {code} найден в строке {}, второй столбец — цена {}.", i + 2, n(price))),
     )
 }
 
@@ -179,9 +180,11 @@ const HOTKEYS: &[(&str, &str)] = &[
 fn hotkey(r: &mut Rng) -> Question {
     let i = r.below(HOTKEYS.len());
     let (what, key) = HOTKEYS.get(i).copied().unwrap_or(("Жирный шрифт", "Ctrl+B"));
-    let mut opts = vec![key.to_string()];
+    let what = ts(what);
+    let mut opts = vec![ts(key).to_string()];
     while opts.len() < 4 {
         let (_, k) = HOTKEYS.get(r.below(HOTKEYS.len())).copied().unwrap_or(("", "Ctrl+B"));
+        let k = ts(k);
         if !opts.iter().any(|o| o == k) {
             opts.push(k.into());
         }
@@ -195,7 +198,7 @@ fn hotkey(r: &mut Rng) -> Question {
         "Ctrl+↓" => "keys.jump",
         _ => "keys.bold",
     };
-    q(r, "Горячие клавиши", format!("{what} — какое сочетание?"), Vec::new(), opts, 20, skill, format!("{what}: {key}."))
+    q(r, ts("Горячие клавиши"), tr(&format!("{what} — какое сочетание?")), Vec::new(), opts, 20, skill, format!("{what}: {}.", ts(key)))
 }
 
 fn references(r: &mut Rng) -> Question {
@@ -214,13 +217,13 @@ fn references(r: &mut Rng) -> Question {
     ];
     q(
         r,
-        "Ссылки",
-        format!("В C{row} формула =A{row}*$F$1. Её скопировали в {target}. Что там будет?"),
+        ts("Ссылки"),
+        tr(&format!("В C{row} формула =A{row}*$F$1. Её скопировали в {target}. Что там будет?")),
         Vec::new(),
         opts,
         35,
         "refs.abs",
-        format!("Относительная часть сдвигается на {dr} строк и {dc} столбцов, $F$1 закреплена: {right}."),
+        tr(&format!("Относительная часть сдвигается на {dr} строк и {dc} столбцов, $F$1 закреплена: {right}.")),
     )
 }
 
@@ -231,13 +234,13 @@ fn percent(r: &mut Rng) -> Question {
     let after = before * (100 + pct) as f64 / 100.0;
     q(
         r,
-        "Расчёты",
-        format!("Выручка была {} ₽, стала {} ₽. На сколько процентов она изменилась?", n(before), n(after)),
+        ts("Расчёты"),
+        tr(&format!("Выручка была {} ₽, стала {} ₽. На сколько процентов она изменилась?", n(before), n(after))),
         Vec::new(),
         vec![format!("{pct:+}%"), format!("{:+}%", -pct), format!("{:+.1}%", (after - before) / after * 100.0), format!("{:+}%", pct * 2)],
         40,
         "start.div",
-        format!("(стало − было) / было = {} / {} = {pct:+}%.", n(after - before), n(before)),
+        tr(&format!("(стало − было) / было = {} / {} = {pct:+}%.", n(after - before), n(before))),
     )
 }
 
@@ -247,29 +250,29 @@ fn avg_check(r: &mut Rng) -> Question {
     let rev = if rev == ord { rev + 5 } else { rev };
     let change = ((100 + rev) as f64 / (100 + ord) as f64 - 1.0) * 100.0;
     let right = if change < 0.0 {
-        format!("Снизился примерно на {:.0}%", -change)
+        tr(&format!("Снизился примерно на {:.0}%", -change))
     } else {
-        format!("Вырос примерно на {change:.0}%")
+        tr(&format!("Вырос примерно на {change:.0}%"))
     };
     let wrong1 = if change < 0.0 {
-        format!("Вырос примерно на {:.0}%", -change)
+        tr(&format!("Вырос примерно на {:.0}%", -change))
     } else {
-        format!("Снизился примерно на {change:.0}%")
+        tr(&format!("Снизился примерно на {change:.0}%"))
     };
     q(
         r,
-        "Бизнес-вывод",
-        format!("Выручка выросла на {rev}%, число чеков — на {ord}%. Что со средним чеком?"),
+        ts("Бизнес-вывод"),
+        tr(&format!("Выручка выросла на {rev}%, число чеков — на {ord}%. Что со средним чеком?")),
         Vec::new(),
-        vec![right, wrong1, "Не изменился".into(), format!("Вырос на {}%", rev + ord)],
+        vec![right, wrong1, ts("Не изменился").into(), tr(&format!("Вырос на {}%", rev + ord))],
         45,
         "fn.round",
-        format!("Средний чек = выручка / чеки: {} / {} − 1 ≈ {change:+.0}%.", (100 + rev) as f64 / 100.0, (100 + ord) as f64 / 100.0),
+        tr(&format!("Средний чек = выручка / чеки: {} / {} − 1 ≈ {change:+.0}%.", (100 + rev) as f64 / 100.0, (100 + ord) as f64 / 100.0)),
     )
 }
 
 fn growth_month(r: &mut Rng) -> Question {
-    let months = ["Янв", "Фев", "Мар", "Апр", "Май"];
+    let months = [ts("Янв"), ts("Фев"), ts("Мар"), ts("Апр"), ts("Май")];
     let mut v = vec![(r.int(80, 120) * 1000) as f64];
     for i in 1..5 {
         let prev = v.get(i - 1).copied().unwrap_or(100_000.0);
@@ -295,40 +298,44 @@ fn growth_month(r: &mut Rng) -> Question {
     opts.truncate(4);
     q(
         r,
-        "Чтение данных",
-        "В каком месяце выручка выросла сильнее всего относительно предыдущего (в %)?".into(),
+        ts("Чтение данных"),
+        ts("В каком месяце выручка выросла сильнее всего относительно предыдущего (в %)?").into(),
         table,
         opts,
         50,
         "start.div",
-        format!("Считаем рост к предыдущему месяцу: максимальный — {}. Самая большая выручка — не то же самое, что самый большой рост.", name(best)),
+        tr(&format!(
+            "Считаем рост к предыдущему месяцу: максимальный — {}. Самая большая выручка — не то же самое, что самый большой рост.",
+            name(best)
+        )),
     )
 }
 
 fn round_q(r: &mut Rng) -> Question {
     let whole = r.int(1, 99);
     let cents = r.int(101, 999);
-    let x = format!("{whole},{cents:03}");
+    let sep = if gridcraft_tr::english() { '.' } else { ',' };
+    let x = format!("{whole}{sep}{cents:03}");
     let k = r.int(0, 2);
     // Integer arithmetic: 3 decimals → k decimals, half up.
     let v = whole * 1000 + cents;
     let div = 10i64.pow((3 - k) as u32);
     let fmt = |units: i64| {
         let scale = 10i64.pow(k as u32);
-        if k == 0 { units.to_string() } else { format!("{},{:0w$}", units / scale, units % scale, w = k as usize) }
+        if k == 0 { units.to_string() } else { format!("{}{sep}{:0w$}", units / scale, units % scale, w = k as usize) }
     };
     let rounded = (v + div / 2) / div;
     let trunc = v / div;
     let other = if rounded == trunc { trunc + 1 } else { trunc };
     q(
         r,
-        "Формулы",
-        format!("Что вернёт =ОКРУГЛ({x};{k})?"),
+        ts("Формулы"),
+        tr(&format!("Что вернёт =ОКРУГЛ({x};{k})?")),
         Vec::new(),
         vec![fmt(rounded), fmt(other), fmt(rounded + 2), x.clone()],
         25,
         "fn.round",
-        format!("ОКРУГЛ до {k} знаков по правилам арифметики: {}.", fmt(rounded)),
+        tr(&format!("ОКРУГЛ до {k} знаков по правилам арифметики: {}.", fmt(rounded))),
     )
 }
 
@@ -340,31 +347,37 @@ fn eomonth(r: &mut Rng) -> Question {
     let next_end = date(2026, m + 2, 1) - 1.0;
     q(
         r,
-        "Даты",
-        format!("В A1 дата {}. Что вернёт =КОНМЕСЯЦА(A1;0)?", date_text(start)),
+        ts("Даты"),
+        tr(&format!("В A1 дата {}. Что вернёт =КОНМЕСЯЦА(A1;0)?", date_text(start))),
         Vec::new(),
         vec![date_text(end), date_text(next_end), date_text(date(2026, m, 1)), date_text(start + 30.0)],
         30,
         "date.eomonth",
-        "КОНМЕСЯЦА(дата; 0) — последний день того же месяца.".into(),
+        ts("КОНМЕСЯЦА(дата; 0) — последний день того же месяца.").into(),
     )
 }
 
 fn text_q(r: &mut Rng) -> Question {
-    let words = [("Москва-Сити", 6), ("Казань-Арена", 6), ("Счёт-фактура", 4), ("Самара-Центр", 6)];
-    let (w, k) = words.get(r.below(words.len())).copied().unwrap_or(("Москва-Сити", 6));
+    let words = [ts("Москва-Сити"), ts("Казань-Арена"), ts("Счёт-фактура"), ts("Самара-Центр")];
+    let w = words.get(r.below(words.len())).copied().unwrap_or(ts("Москва-Сити"));
+    // The part before the hyphen (or space), so the answer is a whole word.
+    let k = w.chars().position(|c| c == '-' || c == ' ').unwrap_or(4);
     let left: String = w.chars().take(k).collect();
     let right: String = w.chars().rev().take(k).collect::<Vec<_>>().into_iter().rev().collect();
     let more: String = w.chars().take(k + 1).collect();
     q(
         r,
-        "Текст",
-        format!("Что вернёт =ЛЕВСИМВ(\"{w}\";{k})?"),
+        ts("Текст"),
+        if gridcraft_tr::english() {
+            format!("What does =LEFT(\"{w}\",{k}) return?")
+        } else {
+            format!("Что вернёт =ЛЕВСИМВ(\"{w}\";{k})?")
+        },
         Vec::new(),
         vec![left.clone(), right, more, w.to_string()],
         25,
         "text.leftright",
-        format!("Первые {k} символов: «{left}»."),
+        tr(&format!("Первые {k} символов: «{left}».")),
     )
 }
 
@@ -448,7 +461,7 @@ const CONCEPTS: &[(&str, &str, &[&str], &str, &str)] = &[
 
 fn concept(r: &mut Rng) -> Question {
     let (topic, prompt, opts, skill, explain) = CONCEPTS.get(r.below(CONCEPTS.len())).copied().unwrap_or(CONCEPTS[0]);
-    q(r, topic, prompt.into(), Vec::new(), opts.iter().map(|s| s.to_string()).collect(), 30, skill, explain.into())
+    q(r, ts(topic), ts(prompt).into(), Vec::new(), opts.iter().map(|s| ts(s).to_string()).collect(), 30, skill, ts(explain).into())
 }
 
 const SQL_CONCEPTS: &[(&str, &[&str], &str, &str)] = &[
@@ -513,7 +526,7 @@ const SQL_CONCEPTS: &[(&str, &[&str], &str, &str)] = &[
 
 fn sql_concept(r: &mut Rng) -> Question {
     let (prompt, opts, skill, explain) = SQL_CONCEPTS.get(r.below(SQL_CONCEPTS.len())).copied().unwrap_or(SQL_CONCEPTS[0]);
-    q(r, "SQL", prompt.into(), Vec::new(), opts.iter().map(|s| s.to_string()).collect(), 30, skill, explain.into())
+    q(r, "SQL", ts(prompt).into(), Vec::new(), opts.iter().map(|s| ts(s).to_string()).collect(), 30, skill, ts(explain).into())
 }
 
 fn mini_orders(r: &mut Rng, rows: usize) -> SqlTable {
@@ -567,7 +580,7 @@ fn sql_result(r: &mut Rng) -> Option<Question> {
         2 => {
             let qy = "SELECT client_id, COUNT(*) FROM orders GROUP BY client_id".to_string();
             let v = rows_of(&t, &qy)?.to_string();
-            (format!("{qy}\n— сколько строк вернёт запрос?"), "sql.group", v)
+            (tr(&format!("{qy}\n— сколько строк вернёт запрос?")), "sql.group", v)
         }
         _ => {
             let qy = "SELECT COUNT(DISTINCT client_id) FROM orders".to_string();
@@ -581,12 +594,12 @@ fn sql_result(r: &mut Rng) -> Option<Question> {
     Some(q(
         r,
         "SQL",
-        format!("Что вернёт запрос?\n{query}"),
+        tr(&format!("Что вернёт запрос?\n{query}")),
         table_view(&t),
         opts,
         50,
         skill,
-        format!("Ответ: {value}. Проверь фильтр и что именно агрегируется."),
+        tr(&format!("Ответ: {value}. Проверь фильтр и что именно агрегируется.")),
     ))
 }
 

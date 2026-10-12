@@ -1326,7 +1326,9 @@ fn about(ui: &mut egui::Ui, d: &mut Dialog) {
             ui.heading("GridCraft");
             ui.label(format!("Version {}", env!("CARGO_PKG_VERSION")));
             ui.add_space(4.0);
-            ui.label("A clean-room, open-source, Rust-native spreadsheet. This copy ships with Taskathlon and is based on GridCraft by the ArtCraft team.");
+            ui.label(
+                "A clean-room, open-source, Rust-native spreadsheet. This copy ships with Taskathlon and is based on GridCraft by the ArtCraft team.",
+            );
             ui.hyperlink_to("GridCraft upstream on GitHub", "https://github.com/storytold/gridcraft");
             ui.hyperlink_to("Taskathlon on GitHub", "https://github.com/yzolotarev/taskathlon");
         }

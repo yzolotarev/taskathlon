@@ -1,6 +1,7 @@
 //! Seeded exercise generators. `layout` fixes where things are and what is asked; `data`
 //! fixes the numbers, so grading can re-run the learner's formulas on other numbers.
 
+use gridcraft_tr::{t as tr, ts};
 mod acc;
 pub mod cases;
 mod drills;
@@ -427,7 +428,7 @@ pub fn build(spec: &Spec) -> Result<Task> {
         let mut g = Gen::new(spec);
         return (case.build)(&mut g);
     }
-    let sk = skill(&spec.skill).ok_or_else(|| crate::LearnError::Invalid(format!("Нет навыка {}", spec.skill)))?;
+    let sk = skill(&spec.skill).ok_or_else(|| crate::LearnError::Invalid(tr(&format!("Нет навыка {}", spec.skill))))?;
     let mut g = Gen::new(spec);
     (sk.build)(&mut g)
 }
@@ -557,7 +558,7 @@ impl Gen {
     }
 
     /// Fills a category column from `pool` (data seed) and guarantees `must` appears.
-    pub fn categories(&mut self, t: &Table, col: u32, pool: &[&str], must: &str) {
+    pub fn categories(&mut self, t: &Table, col: u32, pool: &[&'static str], must: &str) {
         let n = t.n();
         let forced = t.first + self.d.below(n as usize) as u32;
         for r in t.rows() {
@@ -600,9 +601,10 @@ impl Gen {
 
     pub fn task(&mut self, title: &str, prompt: String, example: Option<String>, focus: String) -> Task {
         let sk = skill(&self.spec.skill);
-        let mut hints = vec![sk.map(|s| s.idea.to_string()).unwrap_or_default(), sk.map(|s| format!("Шаблон: {}", s.syntax)).unwrap_or_default()];
+        let mut hints =
+            vec![sk.map(|s| ts(s.idea).to_string()).unwrap_or_default(), sk.map(|s| tr(&format!("Шаблон: {}", s.syntax))).unwrap_or_default()];
         if let Some(e) = &example {
-            hints.push(format!("Ответ: {e}"));
+            hints.push(tr(&format!("Ответ: {e}")));
         }
         Task {
             spec: self.spec.clone(),
@@ -626,9 +628,9 @@ impl Gen {
         self.formula_check(cell, reference);
         let shown = ru(reference);
         let prompt = match self.level {
-            1 => format!("Введи в {cell} формулу:"),
-            2 => format!("{ask2} Ответ — в {cell}."),
-            _ => format!("{ask3} Ответ — в {cell}."),
+            1 => tr(&format!("Введи в {cell} формулу:")),
+            2 => tr(&format!("{ask2} Ответ — в {cell}.")),
+            _ => tr(&format!("{ask3} Ответ — в {cell}.")),
         };
         self.task(title, prompt, Some(shown), cell.to_string())
     }
@@ -647,9 +649,9 @@ impl Gen {
         let last = t.cell(col, t.last);
         let shown = ru(&reference(t.first));
         let prompt = match self.level {
-            1 => format!("Введи в {first} формулу и протяни её вниз до {last}:"),
-            2 => format!("{ask2} Заполни столбец «{header}» ({first}:{last})."),
-            _ => format!("{ask3} Заполни {first}:{last}."),
+            1 => tr(&format!("Введи в {first} формулу и протяни её вниз до {last}:")),
+            2 => tr(&format!("{ask2} Заполни столбец «{header}» ({first}:{last}).")),
+            _ => tr(&format!("{ask3} Заполни {first}:{last}.")),
         };
         let mut task = self.task(title, prompt, Some(shown), first);
         task.goal_seconds += 10.0;

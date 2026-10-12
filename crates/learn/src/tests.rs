@@ -121,6 +121,19 @@ fn every_case_is_solvable() {
 }
 
 #[test]
+fn every_skill_and_case_is_solvable_in_english() {
+    gridcraft_tr::set_english_here(Some(true));
+    for id in SKILLS.iter().map(|s| s.id).chain(CASES.iter().map(|c| c.id)) {
+        for level in 1..=4 {
+            for seed in [2u64, 13] {
+                assert_solvable(&Spec::new(id, level, seed));
+            }
+        }
+    }
+    gridcraft_tr::set_english_here(None);
+}
+
+#[test]
 fn same_seed_same_exercise_and_layout_survives_new_data() {
     let a = Task::generate(&Spec::new("cond.sumif", 3, 5)).unwrap();
     let b = Task::generate(&Spec::new("cond.sumif", 3, 5)).unwrap();
@@ -387,4 +400,47 @@ fn sprint_plans_comparable_runs_and_keeps_records() {
     let (_, rec, _) = p.record_sprint(r(300.0), now);
     assert!(!rec);
     assert_eq!(p.sprint_best("mix"), Some(200.0));
+}
+
+#[test]
+fn english_mode_shows_no_russian() {
+    gridcraft_tr::set_english_here(Some(true));
+    let cyr = |s: &str| s.chars().any(|c| ('а'..='я').contains(&c.to_lowercase().next().unwrap_or(c)) || c == 'ё');
+    let mut bad = std::collections::BTreeSet::new();
+    for id in SKILLS.iter().map(|s| s.id).chain(CASES.iter().map(|c| c.id)) {
+        for level in 1..=4 {
+            for seed in [2u64, 13, 5] {
+                let t = Task::generate(&Spec::new(id, level, seed)).unwrap();
+                let mut all = vec![t.title.clone(), t.prompt.clone()];
+                all.extend(t.hints.clone());
+                if let Some(b) = &t.brief {
+                    all.push(format!("{b:?}"));
+                }
+                for (_, c, ..) in &t.setup.cells {
+                    all.push(format!("{c:?}"));
+                }
+                if let Some(q) = &t.sql {
+                    all.push(format!("{:?}", q.tables));
+                }
+                for s in all {
+                    if cyr(&s) {
+                        bad.insert(format!("{id}: {s}"));
+                    }
+                }
+            }
+        }
+    }
+    for seed in 0..40u64 {
+        for track in [crate::quiz::Track::Excel, crate::quiz::Track::Mixed, crate::quiz::Track::Sql] {
+            for q in crate::quiz::blitz(seed, track, 15) {
+                for s in [q.topic.clone(), q.prompt.clone(), q.explain.clone(), q.options.join(" | "), format!("{:?}", q.table)] {
+                    if cyr(&s) {
+                        bad.insert(format!("quiz: {s}"));
+                    }
+                }
+            }
+        }
+    }
+    gridcraft_tr::set_english_here(None);
+    assert!(bad.is_empty(), "Russian left in English mode: {bad:#?}");
 }

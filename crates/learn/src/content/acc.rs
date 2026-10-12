@@ -5,6 +5,7 @@ use super::{Gen, PEOPLE};
 use crate::check::Kind;
 use crate::sheet::{Cell, a1};
 use crate::{Result, Task};
+use gridcraft_tr::{t as tr, ts};
 
 pub const ACCOUNTS: &[(&str, f64)] = &[
     ("Касса", 50.0),
@@ -56,7 +57,7 @@ pub fn accounts(g: &mut Gen) -> Result<Task> {
         3 => 7,
         _ => 10,
     };
-    let t = g.table("План счетов", &["Что учитываем", "Счёт"], n);
+    let t = g.table(ts("План счетов"), &[ts("Что учитываем"), ts("Счёт")], n);
     g.setup.width(t.col(0), 300.0);
     let mut idx: Vec<usize> = (0..ACCOUNTS.len()).collect();
     if g.level <= 2 {
@@ -67,6 +68,7 @@ pub fn accounts(g: &mut Gen) -> Result<Task> {
     let mut first = None;
     for (i, r) in t.rows().enumerate() {
         let Some(&(name, no)) = idx.get(i).and_then(|k| ACCOUNTS.get(*k)) else { continue };
+        let name = ts(name);
         g.setup.text(t.cell(0, r), name);
         let cell = t.cell(1, r);
         g.setup.answer(cell.clone());
@@ -75,13 +77,13 @@ pub fn accounts(g: &mut Gen) -> Result<Task> {
         first.get_or_insert(cell);
     }
     let prompt = match g.level {
-        1 => format!("Впиши номера счетов. Шпаргалка: {}.", cheat.join("; ")),
-        _ => "Впиши номер счёта из плана счетов для каждой строки.".into(),
+        1 => tr(&format!("Впиши номера счетов. Шпаргалка: {}.", cheat.join("; "))),
+        _ => ts("Впиши номер счёта из плана счетов для каждой строки.").into(),
     };
-    let mut task = g.task("План счетов", prompt, None, first.unwrap_or_else(|| "B2".into()));
+    let mut task = g.task(ts("План счетов"), prompt, None, first.unwrap_or_else(|| "B2".into()));
     task.hints = vec![
-        "Деньги: 50 касса, 51 расчётный счёт. Расчёты: 60 поставщики, 62 покупатели, 70 зарплата, 68 налоги, 69 взносы, 71 подотчёт.".into(),
-        "Имущество: 01 ОС, 02 амортизация, 10 материалы, 41 товары, 19 входящий НДС. Итоги: 90 продажи, 91 прочие, 99 прибыль. Затраты: 26, 44."
+        ts("Деньги: 50 касса, 51 расчётный счёт. Расчёты: 60 поставщики, 62 покупатели, 70 зарплата, 68 налоги, 69 взносы, 71 подотчёт.").into(),
+        ts("Имущество: 01 ОС, 02 амортизация, 10 материалы, 41 товары, 19 входящий НДС. Итоги: 90 продажи, 91 прочие, 99 прибыль. Затраты: 26, 44.")
             .into(),
         cheat.join("; "),
     ];
@@ -95,7 +97,7 @@ pub fn entries(g: &mut Gen) -> Result<Task> {
         3 => 6,
         _ => 8,
     };
-    let t = g.table("Журнал операций", &["Операция", "Дт", "Кт"], n);
+    let t = g.table(ts("Журнал операций"), &[ts("Операция"), ts("Дт"), ts("Кт")], n);
     g.setup.width(t.col(0), 360.0);
     let mut idx: Vec<usize> = (0..ENTRIES.len()).collect();
     if g.level <= 2 {
@@ -106,24 +108,25 @@ pub fn entries(g: &mut Gen) -> Result<Task> {
     let mut first = None;
     for (i, r) in t.rows().enumerate() {
         let Some(&(op, dt, kt)) = idx.get(i).and_then(|k| ENTRIES.get(*k)) else { continue };
+        let op = ts(op);
         g.setup.text(t.cell(0, r), op);
         for (c, v) in [(1, dt), (2, kt)] {
             let cell = t.cell(c, r);
             g.setup.answer(cell.clone());
             g.check(&cell, Kind::Value { cell: cell.clone(), expected: Cell::Num(v) });
         }
-        solution.push(format!("{op}: Дт {dt:02} Кт {kt:02}"));
+        solution.push(tr(&format!("{op}: Дт {dt:02} Кт {kt:02}")));
         first.get_or_insert(t.cell(1, r));
     }
     let prompt = match g.level {
-        1 => "Составь проводки: в «Дт» — счёт, куда пришло, в «Кт» — откуда ушло. Пример: оплата поставщику с расчётного счёта = Дт 60 Кт 51."
+        1 => ts("Составь проводки: в «Дт» — счёт, куда пришло, в «Кт» — откуда ушло. Пример: оплата поставщику с расчётного счёта = Дт 60 Кт 51.")
             .to_string(),
-        _ => "Составь проводки для операций.".to_string(),
+        _ => ts("Составь проводки для операций.").to_string(),
     };
-    let mut task = g.task("Проводки", prompt, None, first.unwrap_or_else(|| "B2".into()));
+    let mut task = g.task(ts("Проводки"), prompt, None, first.unwrap_or_else(|| "B2".into()));
     task.hints = vec![
-        "Дебет — что увеличилось у нас (деньги на 51, товар на 41) или долг уменьшился. Кредит — источник.".into(),
-        "Начисление зарплаты: Дт 26 Кт 70. НДФЛ: Дт 70 Кт 68. Выплата: Дт 70 Кт 51. Выручка: Дт 62 Кт 90.".into(),
+        ts("Дебет — что увеличилось у нас (деньги на 51, товар на 41) или долг уменьшился. Кредит — источник.").into(),
+        ts("Начисление зарплаты: Дт 26 Кт 70. НДФЛ: Дт 70 Кт 68. Выплата: Дт 70 Кт 51. Выручка: Дт 62 Кт 90.").into(),
         solution.join("; "),
     ];
     task.goal_seconds = 25.0 * n as f32;
@@ -132,7 +135,7 @@ pub fn entries(g: &mut Gen) -> Result<Task> {
 
 pub fn vat_extract(g: &mut Gen) -> Result<Task> {
     let n = g.rows();
-    let t = g.table("Входящие счета", &["Поставщик", "Сумма с НДС"], n);
+    let t = g.table(ts("Входящие счета"), &[ts("Поставщик"), ts("Сумма с НДС")], n);
     for r in t.rows() {
         let p = g.d.pick(super::PARTIES);
         g.txt(&t, 0, r, p);
@@ -141,37 +144,37 @@ pub fn vat_extract(g: &mut Gen) -> Result<Task> {
     }
     let b = t.col(1);
     Ok(g.column(
-        "Выделить НДС",
+        ts("Выделить НДС"),
         &t,
         2,
-        "в т.ч. НДС 22%",
+        ts("в т.ч. НДС 22%"),
         |r| format!("=ROUND({}*22/122,2)", a1(r, b)),
-        "Выдели НДС из суммы: ОКРУГЛ(сумма*22/122; 2).",
-        "Сколько НДС 22% внутри каждого счёта? До копеек.",
+        ts("Выдели НДС из суммы: ОКРУГЛ(сумма*22/122; 2)."),
+        ts("Сколько НДС 22% внутри каждого счёта? До копеек."),
     ))
 }
 
 pub fn payroll(g: &mut Gen) -> Result<Task> {
     let n = g.rows();
-    let t = g.table("Зарплата за месяц", &["Сотрудник", "Начислено"], n);
+    let t = g.table(ts("Зарплата за месяц"), &[ts("Сотрудник"), ts("Начислено")], n);
     for (i, r) in t.rows().enumerate() {
-        g.txt(&t, 0, r, PEOPLE.get(i % PEOPLE.len()).copied().unwrap_or("Сотрудник"));
+        g.txt(&t, 0, r, PEOPLE.get(i % PEOPLE.len()).copied().map(ts).unwrap_or(ts("Сотрудник")));
         let v = g.d.amount(30_000, 180_000, 100);
         g.num(&t, 1, r, v);
     }
     let b = t.col(1);
     if g.level <= 2 {
         return Ok(g.column(
-            "НДФЛ",
+            ts("НДФЛ"),
             &t,
             2,
-            "НДФЛ 13%",
+            ts("НДФЛ 13%"),
             |r| format!("=ROUND({}*0.13,0)", a1(r, b)),
-            "НДФЛ = ОКРУГЛ(начислено*13%; 0) — до рубля.",
-            "Посчитай НДФЛ 13% по каждому, до рубля.",
+            ts("НДФЛ = ОКРУГЛ(начислено*13%; 0) — до рубля."),
+            ts("Посчитай НДФЛ 13% по каждому, до рубля."),
         ));
     }
-    for (col, head) in [(2, "НДФЛ 13%"), (3, "К выплате")] {
+    for (col, head) in [(2, ts("НДФЛ 13%")), (3, ts("К выплате"))] {
         g.setup.text(t.cell(col, t.header), head);
         g.setup.bold.push(t.cell(col, t.header));
         g.setup.width(t.col(col), 120.0);
@@ -185,33 +188,33 @@ pub fn payroll(g: &mut Gen) -> Result<Task> {
         }
     }
     let first = t.cell(2, t.first);
-    let prompt = "Заполни НДФЛ 13% (до рубля) и сумму к выплате (начислено − НДФЛ).".to_string();
-    let mut task = g.task("НДФЛ и к выплате", prompt, None, first);
+    let prompt = ts("Заполни НДФЛ 13% (до рубля) и сумму к выплате (начислено − НДФЛ).").to_string();
+    let mut task = g.task(ts("НДФЛ и к выплате"), prompt, None, first);
     task.goal_seconds = 90.0;
     Ok(task)
 }
 
 pub fn insurance(g: &mut Gen) -> Result<Task> {
     let n = g.rows();
-    let t = g.table("Взносы за месяц", &["Сотрудник", "Начислено"], n);
+    let t = g.table(ts("Взносы за месяц"), &[ts("Сотрудник"), ts("Начислено")], n);
     for (i, r) in t.rows().enumerate() {
-        g.txt(&t, 0, r, PEOPLE.get(i % PEOPLE.len()).copied().unwrap_or("Сотрудник"));
+        g.txt(&t, 0, r, PEOPLE.get(i % PEOPLE.len()).copied().map(ts).unwrap_or(ts("Сотрудник")));
         let v = g.d.amount(30_000, 180_000, 100);
         g.num(&t, 1, r, v);
     }
     let b = t.col(1);
     let mut task = g.column(
-        "Страховые взносы",
+        ts("Страховые взносы"),
         &t,
         2,
-        "Взносы 30%",
+        ts("Взносы 30%"),
         |r| format!("=ROUND({}*0.3,2)", a1(r, b)),
-        "Взносы = ОКРУГЛ(начислено*30%; 2).",
-        "Посчитай страховые взносы работодателя по ставке 30% (учебная ставка) до копеек.",
+        ts("Взносы = ОКРУГЛ(начислено*30%; 2)."),
+        ts("Посчитай страховые взносы работодателя по ставке 30% (учебная ставка) до копеек."),
     );
     if g.level >= 3 {
         let total = t.cell(2, t.last + 1);
-        task.setup.text(t.cell(0, t.last + 1), "Итого");
+        task.setup.text(t.cell(0, t.last + 1), ts("Итого"));
         task.setup.answer(total.clone());
         task.checks.push(crate::check::Check {
             label: total.clone(),
@@ -222,28 +225,28 @@ pub fn insurance(g: &mut Gen) -> Result<Task> {
                 live: true,
             },
         });
-        task.prompt.push_str(" И итог под таблицей.");
+        task.prompt.push_str(ts(" И итог под таблицей."));
     }
     Ok(task)
 }
 
 pub fn osv(g: &mut Gen) -> Result<Task> {
     let n = g.rows().min(8);
-    let t = g.table("Оборотно-сальдовая ведомость", &["Счёт", "Сальдо нач.", "Оборот Дт", "Оборот Кт"], n);
+    let t = g.table(ts("Оборотно-сальдовая ведомость"), &[ts("Счёт"), ts("Сальдо нач."), ts("Оборот Дт"), ts("Оборот Кт")], n);
     let active = [
-        ("01", "Основные средства"),
-        ("10", "Материалы"),
-        ("41", "Товары"),
-        ("50", "Касса"),
-        ("51", "Расчётный счёт"),
-        ("62", "Покупатели"),
-        ("71", "Подотчёт"),
-        ("19", "НДС входящий"),
+        ("01", ts("Основные средства")),
+        ("10", ts("Материалы")),
+        ("41", ts("Товары")),
+        ("50", ts("Касса")),
+        ("51", ts("Расчётный счёт")),
+        ("62", ts("Покупатели")),
+        ("71", ts("Подотчёт")),
+        ("19", ts("НДС входящий")),
     ];
     let mut order: Vec<usize> = (0..active.len()).collect();
     g.l.shuffle(&mut order);
     for (i, r) in t.rows().enumerate() {
-        let (no, name) = order.get(i).and_then(|k| active.get(*k)).copied().unwrap_or(("51", "Расчётный счёт"));
+        let (no, name) = order.get(i).and_then(|k| active.get(*k)).copied().unwrap_or(("51", ts("Расчётный счёт")));
         g.txt(&t, 0, r, &format!("{no} {name}"));
         let start = g.d.amount(0, 500_000, 100);
         let dt = g.d.amount(0, 300_000, 100);
@@ -255,12 +258,12 @@ pub fn osv(g: &mut Gen) -> Result<Task> {
     g.setup.width(t.col(0), 180.0);
     let (b, c, d) = (t.col(1), t.col(2), t.col(3));
     Ok(g.column(
-        "Сальдо в ОСВ",
+        ts("Сальдо в ОСВ"),
         &t,
         4,
-        "Сальдо кон.",
+        ts("Сальдо кон."),
         |r| format!("={}+{}-{}", a1(r, b), a1(r, c), a1(r, d)),
-        "Все счета активные: сальдо на конец = начальное + оборот Дт − оборот Кт.",
-        "Досчитай конечное сальдо по каждому (активному) счёту.",
+        ts("Все счета активные: сальдо на конец = начальное + оборот Дт − оборот Кт."),
+        ts("Досчитай конечное сальдо по каждому (активному) счёту."),
     ))
 }

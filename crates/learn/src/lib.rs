@@ -106,8 +106,8 @@ impl Task {
     }
     pub fn skill_name(&self) -> String {
         content::skill(&self.spec.skill)
-            .map(|s| s.name.to_string())
-            .or_else(|| content::cases::case(&self.spec.skill).map(|c| c.title.to_string()))
+            .map(|s| gridcraft_tr::ts(s.name).to_string())
+            .or_else(|| content::cases::case(&self.spec.skill).map(|c| gridcraft_tr::ts(c.title).to_string()))
             .unwrap_or_else(|| self.title.clone())
     }
 }
