@@ -102,6 +102,14 @@ pub const CASES: &[CaseDef] = &[
         requires: &["fn.round", "cond.sumif", "fn.minmax"],
         build: retail,
     },
+    CaseDef {
+        id: "case.recon",
+        title: "Расхождения в двух выгрузках",
+        role: "Бухгалтер / аналитик",
+        minutes: 30,
+        requires: &["lookup.xlookup", "cond.sumif", "text.number"],
+        build: recon,
+    },
 ];
 
 pub fn case(id: &str) -> Option<&'static CaseDef> {
@@ -877,4 +885,130 @@ pub fn retail(g: &mut Gen) -> Result<Task> {
         ts("H1 — лучший магазин; H2 — его доля в общей выручке (число или %).").into(),
     ];
     Ok(finish(g, "case.retail", brief, &deliverables, "E2".into()))
+}
+
+/// Two messy exports of the same invoices: ours from the accounting system, the supplier's from
+/// their e-mail. Different number formats, text amounts and dates, extra columns, an empty row,
+/// a total row, a doubled line. Graded by values; any method and either sign convention.
+pub fn recon(g: &mut Gen) -> Result<Task> {
+    let n = size(g, 9) as usize;
+    let party = g.l.pick(PARTIES);
+    let messy = g.level >= 3;
+    // Distinct document numbers in date order.
+    let mut docs: Vec<(u32, f64, f64)> = Vec::new();
+    let mut no = 100 + g.l.int(0, 40) as u32;
+    let mut day = date(2026, 3, 2);
+    for _ in 0..n {
+        no += 1 + g.l.int(0, 6) as u32;
+        day += g.l.int(1, 3) as f64;
+        docs.push((no, day, g.d.amount(3_000, 250_000, 10) + g.d.int(0, 99) as f64 / 100.0));
+    }
+    // Discrepancies: positions are layout, amounts are data.
+    let mut idx: Vec<usize> = (0..n).collect();
+    g.l.shuffle(&mut idx);
+    let only_ours = idx.first().copied().unwrap_or(0);
+    let only_theirs = idx.get(1).copied().unwrap_or(1);
+    let typo = idx.get(2).copied().unwrap_or(2);
+    let doubled = if g.level >= 2 { idx.get(3).copied() } else { None };
+    let typo2 = if messy { idx.get(4).copied() } else { None };
+    let mut findings: Vec<(u32, f64)> = Vec::new();
+    let mut ours: Vec<(u32, f64, f64)> = Vec::new();
+    let mut theirs: Vec<(u32, f64, f64)> = Vec::new();
+    for (i, &(no, day, v)) in docs.iter().enumerate() {
+        if i != only_theirs {
+            ours.push((no, day, v));
+        }
+        if Some(i) == doubled {
+            ours.push((no, day, v));
+            findings.push((no, v));
+        }
+        if i == only_ours {
+            findings.push((no, v));
+            continue;
+        }
+        if i == only_theirs {
+            theirs.push((no, day, v));
+            findings.push((no, -v));
+            continue;
+        }
+        if i == typo || Some(i) == typo2 {
+            // A swapped pair of digits or a lost hundred.
+            let wrong = if g.d.chance(50) { v + 900.0 } else { (v - 100.0).max(10.0) };
+            theirs.push((no, day + 1.0, wrong));
+            findings.push((no, v - wrong));
+            continue;
+        }
+        theirs.push((no, day + g.d.int(0, 1) as f64, v));
+    }
+    findings.sort_by_key(|f| f.0);
+    let net = ours.iter().map(|d| d.2).sum::<f64>() - theirs.iter().map(|d| d.2).sum::<f64>();
+
+    g.setup.text("A1", tr(&format!("Наша выгрузка: расчёты с {party}")));
+    g.setup.bold.push("A1".into());
+    g.setup.header(2, 0, &[ts("Дата"), ts("Документ"), ts("Менеджер"), ts("Сумма"), ts("Комментарий")]);
+    let managers = g.l.sample(PEOPLE, 3);
+    for (j, (no, day, v)) in ours.iter().enumerate() {
+        let r = 3 + j as u32;
+        g.setup.input(a1(r, 0), Cell::Date(*day));
+        let doc = if g.level == 1 { Cell::Num(f64::from(*no)) } else { Cell::Text(tr(&format!("СФ-{no:05}"))) };
+        g.setup.input(a1(r, 1), doc);
+        g.setup.input(a1(r, 2), Cell::Text(managers.get(j % managers.len().max(1)).copied().unwrap_or("").into()));
+        g.setup.input(a1(r, 3), Cell::Num(*v));
+        if j % 4 == 1 {
+            g.setup.input(a1(r, 4), Cell::Text(ts("отгрузка по договору").into()));
+        }
+    }
+    g.setup.text("G1", tr(&format!("Акт от {party} (из письма)")));
+    g.setup.bold.push("G1".into());
+    g.setup.header(2, 6, &[ts("№ счёта"), ts("Дата"), ts("Сумма с НДС"), ts("Статус")]);
+    let gap = if messy { Some(theirs.len() / 2) } else { None };
+    let mut r = 3;
+    let mut total = 0.0;
+    for (j, (no, day, v)) in theirs.iter().enumerate() {
+        if Some(j) == gap {
+            r += 1;
+        }
+        let doc = if messy { Cell::Text(format!("№ {no} ")) } else { Cell::Num(f64::from(*no)) };
+        g.setup.input(a1(r, 6), doc);
+        let when = if messy { Cell::Text(date_text(*day)) } else { Cell::Date(*day) };
+        g.setup.input(a1(r, 7), when);
+        let amount = if g.level >= 2 { Cell::Text(num_text(*v)) } else { Cell::Num(*v) };
+        g.setup.input(a1(r, 8), amount);
+        g.setup.input(a1(r, 9), Cell::Text(if j % 3 == 0 { ts("оплачен") } else { ts("ожидает оплаты") }.into()));
+        total += v;
+        r += 1;
+    }
+    g.setup.input(a1(r, 6), Cell::Text(ts("Итого").into()));
+    g.setup.input(a1(r, 8), Cell::Num((total * 100.0).round() / 100.0));
+    for (c, w) in [(0, 90.0), (1, 100.0), (2, 110.0), (3, 100.0), (4, 150.0), (6, 90.0), (7, 90.0), (8, 110.0), (9, 120.0)] {
+        g.setup.width(c, w);
+    }
+    for (row, label) in [(2, ts("Документов с расхождениями:")), (3, ts("Чистое расхождение, ₽:"))] {
+        g.setup.text(a1(row, 11), label);
+        g.setup.bold.push(a1(row, 11));
+        g.setup.answer(a1(row, 12));
+    }
+    g.setup.width(11, 200.0);
+    let count = findings.len() as f64;
+    push(g, "cond.countif", ts("Документов с расхождениями (M2)"), Kind::Amount { cell: "M2".into(), expected: count, either_sign: false });
+    push(
+        g,
+        "cond.sumif",
+        ts("Чистое расхождение (M3)"),
+        Kind::Amount { cell: "M3".into(), expected: (net * 100.0).round() / 100.0, either_sign: true },
+    );
+    push(g, "lookup.xlookup", ts("Список расхождений"), Kind::Findings { items: findings });
+    let brief = Brief {
+        from: ts("Марина Викторовна, главный бухгалтер").into(),
+        subject: tr(&format!("Не сходимся с {party}")),
+        body: tr(&format!(
+            "Добрый день! {party} прислали свой акт, и сальдо не сходится с нашим. Найди, пожалуйста, до конца дня, по каким документам расхождения и на сколько. Учти: их выгрузка из почты, там всё текстом и с мусором, а у нас бывают задвоения. Как делать — решай сам."
+        )),
+    };
+    let deliverables = vec![
+        ts("Список расхождений где угодно на листе: номер документа и разница рядом (знак — как тебе удобнее).").into(),
+        ts("M2 — сколько документов с расхождениями (задвоение — тоже расхождение).").into(),
+        ts("M3 — чистое расхождение: наша сумма минус их сумма (без строки «Итого»).").into(),
+    ];
+    Ok(finish(g, "case.recon", brief, &deliverables, "L2".into()))
 }

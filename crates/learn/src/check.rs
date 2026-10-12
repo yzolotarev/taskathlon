@@ -60,6 +60,18 @@ pub enum Kind {
     Pairs {
         pairs: Vec<(String, String)>,
     },
+    /// A number in a cell; with `either_sign`, the sign convention is the learner's choice.
+    Amount {
+        cell: String,
+        expected: f64,
+        either_sign: bool,
+    },
+    /// Documents with a discrepancy found anywhere on the sheet: a cell naming the document
+    /// number ("123", "СФ-00123", "№ 123") and, within eight cells to the right, the learner's own
+    /// cell with the difference, either sign.
+    Findings {
+        items: Vec<(u32, f64)>,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -251,6 +263,20 @@ pub fn evaluate(task: &Task, s: &Session, pressed: &[String]) -> Result<Evaluati
                 (ok, if ok { tr(&format!("{combo} — есть!")) } else { tr(&format!("Сделай это клавишами {combo}")) }, Some(combo.clone()))
             }
             Kind::Pairs { pairs } => pairs_check(task, &wb, pairs)?,
+            Kind::Amount { cell, expected, either_sign } => {
+                let actual = sheet::value(s, cell)?;
+                let want = Value::number(*expected);
+                let ok = equivalent(&actual, &want) || (*either_sign && equivalent(&actual, &Value::number(-*expected)));
+                let fb = if ok {
+                    ts("Верно").into()
+                } else if matches!(actual, Value::Empty) {
+                    tr(&format!("{cell} пока пустая"))
+                } else {
+                    tr(&format!("В {cell} стоит {}, а нужно {}", show(&actual), show(&want)))
+                };
+                (ok, fb, Some(show(&want)))
+            }
+            Kind::Findings { items } => findings_check(task, &wb, items),
         };
         outcomes.push(Outcome { label: c.label.clone(), skill: c.skill.clone(), passed, feedback, solution });
     }
@@ -317,6 +343,46 @@ fn formula(task: &Task, wb: &Workbook, cell: &str, reference: &str, live: bool, 
         }
     }
     Ok((true, ts("Верно!").into(), solution))
+}
+
+/// The document number a cell names: a whole number, or the last group of digits in text.
+fn doc_number(v: &Value) -> Option<u32> {
+    match v {
+        Value::Number(n) if n.fract() == 0.0 && *n >= 0.0 && *n < 1e9 => Some(*n as u32),
+        Value::Text(t) => {
+            let digits: String = t.chars().rev().skip_while(|c| !c.is_ascii_digit()).take_while(|c| c.is_ascii_digit()).collect();
+            digits.chars().rev().collect::<String>().parse().ok()
+        }
+        _ => None,
+    }
+}
+
+fn findings_check(task: &Task, wb: &Workbook, items: &[(u32, f64)]) -> (bool, String, Option<String>) {
+    let inputs: Vec<CellRef> =
+        task.setup.cells.iter().filter(|(_, _, i)| *i).map(|(c, ..)| c).chain(task.setup.answers.iter()).filter_map(|c| CellRef::parse(c)).collect();
+    let Some(sh) = sheet_of(wb) else { return (false, ts("Нет листа").into(), None) };
+    let mut missing = Vec::new();
+    for (no, diff) in items {
+        let found = sh.cells.iter().any(|(a, c)| {
+            // The number may be a source cell (a difference column next to the export);
+            // the difference must be the learner's own cell.
+            doc_number(&c.value) == Some(*no)
+                && (1..=8u32).any(|dc| {
+                    let at = CellRef::new(a.row, a.col + dc);
+                    let v = sh.value(at);
+                    !inputs.contains(&at) && (equivalent(&v, &Value::number(*diff)) || equivalent(&v, &Value::number(-*diff)))
+                })
+        });
+        if !found {
+            missing.push(no.to_string());
+        }
+    }
+    let solution = Some(items.iter().map(|(no, d)| format!("{no} — {}", show(&Value::number(*d)))).collect::<Vec<_>>().join("; "));
+    if missing.is_empty() {
+        (true, ts("Все расхождения найдены").into(), solution)
+    } else {
+        (false, tr(&format!("Не нашёл расхождений по документам: {}", missing.join(", "))), solution)
+    }
 }
 
 fn pairs_check(task: &Task, wb: &Workbook, pairs: &[(String, String)]) -> Result<(bool, String, Option<String>)> {

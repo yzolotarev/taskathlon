@@ -30,7 +30,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 app.advance()?;
             }
         }
-        "case" => app.start_case("case.payroll", false)?,
+        "case" => app.start_case(&std::env::var("SNAP_CASE").unwrap_or_else(|_| "case.payroll".into()), false)?,
         "report" => {
             app.start_interview()?;
             app.submit_case(false)?;

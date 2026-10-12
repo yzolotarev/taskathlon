@@ -44,6 +44,14 @@ fn solve(task: &Task, s: &mut Session) -> Vec<String> {
                 let range = format!("{}:{}", sheet::a1(*first, *col), sheet::a1(*last, col + 1));
                 s.execute("data.removeDuplicates", json!({"range": range, "header": false})).unwrap();
             }
+            Kind::Amount { cell, expected, .. } => sheet::set(s, cell, &Cell::Num(*expected)).unwrap(),
+            Kind::Findings { items } => {
+                for (no, diff) in items {
+                    sheet::set(s, &format!("Y{pair_row}"), &Cell::Text(format!("№ {no}"))).unwrap();
+                    sheet::set(s, &format!("Z{pair_row}"), &Cell::Num(-diff)).unwrap();
+                    pair_row += 1;
+                }
+            }
             Kind::Pairs { pairs } => {
                 let refs: Vec<&str> = pairs.iter().map(|(_, f)| f.as_str()).collect();
                 let values = sheet::probe(&task.setup, &refs).unwrap();
