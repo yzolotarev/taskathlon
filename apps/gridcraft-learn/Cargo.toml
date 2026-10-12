@@ -1,0 +1,23 @@
+[package]
+name = "gridcraft-learn"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "Taskathlon: a speed and interview trainer for Excel, SQL and accounting, built on GridCraft"
+
+[[bin]]
+name = "taskathlon"
+path = "src/main.rs"
+[lints]
+workspace = true
+[dependencies]
+gridcraft-learn-core = { path = "../../crates/learn" }
+gridcraft-engine.workspace = true
+gridcraft-ui-egui.workspace = true
+serde_json.workspace = true
+egui.workspace = true
+eframe = { workspace = true, features = ["default_fonts", "wgpu", "x11", "wayland"] }
+ureq = { version = "3.4", default-features = false, features = ["rustls", "json"] }
+[dev-dependencies]
+egui_kittest = { workspace = true, features = ["wgpu", "snapshot"] }
