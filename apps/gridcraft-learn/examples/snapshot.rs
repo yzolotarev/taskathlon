@@ -35,7 +35,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             app.start_interview()?;
             app.submit_case(false)?;
         }
-        "stats" => app.screen = Screen::Stats,
+        "stats" => {
+            use gridcraft_learn_core::profile::{Checkpoint, DAY, Phase};
+            let t = gridcraft_learn::now();
+            app.profile.checkpoints = vec![
+                Checkpoint { phase: Phase::Before, at: t - 12 * DAY, solved: 3, total: 8, seconds: 640.0 },
+                Checkpoint { phase: Phase::After, at: t - 8 * DAY, solved: 7, total: 8, seconds: 410.0 },
+                Checkpoint { phase: Phase::Later, at: t, solved: 7, total: 8, seconds: 380.0 },
+            ];
+            app.profile.method_right = 11;
+            app.profile.method_total = 14;
+            app.screen = Screen::Stats;
+        }
+        "checkpoint" => app.start_checkpoint()?,
+        "checkdone" => {
+            app.start_checkpoint()?;
+            for _ in 0..8 {
+                if app.screen != Screen::Lesson {
+                    break;
+                }
+                app.advance()?;
+            }
+        }
         "choice" | "choicepicked" => {
             app.start_lesson(Some("cond.sumif"))?;
             if let Some(a) = app.active.as_mut() {

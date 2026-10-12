@@ -475,3 +475,27 @@ fn method_questions_have_a_right_answer() {
     assert_eq!((p.method_right, p.method_total), (1, 2));
     assert!(p.remediation.contains(&"cond.sumif".to_string()));
 }
+
+#[test]
+fn skill_checks_go_before_after_and_a_week_later() {
+    use crate::profile::{CHECKPOINT_SKILLS, Checkpoint, Phase};
+    let mut p = Profile::default();
+    let t0 = 1_800_000_000;
+    assert_eq!(p.next_checkpoint(t0), Ok(Phase::Before));
+    let lesson = p.plan_checkpoint(Phase::Before);
+    assert_eq!(lesson.total, CHECKPOINT_SKILLS.len());
+    for slot in &lesson.queue {
+        let spec = p.spec_for(slot);
+        assert_eq!(spec.level, crate::profile::CHECKPOINT_LEVEL);
+        assert_solvable(&spec);
+    }
+    p.record_checkpoint(Checkpoint { phase: Phase::Before, at: t0, solved: 2, total: 8, seconds: 300.0 }, t0);
+    assert!(p.next_checkpoint(t0).is_err(), "after needs training first");
+    for s in CHECKPOINT_SKILLS.iter().take(5) {
+        p.skills.entry((*s).into()).or_default().level = 3;
+    }
+    assert_eq!(p.next_checkpoint(t0 + DAY), Ok(Phase::After));
+    p.record_checkpoint(Checkpoint { phase: Phase::After, at: t0 + DAY, solved: 7, total: 8, seconds: 200.0 }, t0 + DAY);
+    assert!(p.next_checkpoint(t0 + 3 * DAY).is_err(), "the delayed check waits a week");
+    assert_eq!(p.next_checkpoint(t0 + 8 * DAY), Ok(Phase::Later));
+}

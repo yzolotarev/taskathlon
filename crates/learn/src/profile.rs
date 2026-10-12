@@ -12,6 +12,39 @@ pub const DAY: u64 = 86_400;
 /// Sprints always run at level 2 ("named tool"), so records stay comparable.
 pub const SPRINT_LEVEL: u8 = 2;
 pub const SPRINT_LEN: usize = 10;
+/// The skill check: the same eight skills every time, on new data, at level 3 (the task names
+/// the business question, not the tool), with no hints. Taken before training, after it and a
+/// week later, it shows whether the skill holds.
+pub const CHECKPOINT_SKILLS: [&str; 8] = ["start.vat", "refs.abs", "fn.sum", "logic.if", "cond.sumif", "lookup.xlookup", "text.number", "date.diff"];
+pub const CHECKPOINT_LEVEL: u8 = 3;
+/// Battery skills at level 3+ that open the "after" check.
+pub const CHECKPOINT_TRAINED: usize = 5;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Phase {
+    Before,
+    After,
+    Later,
+}
+
+impl Phase {
+    pub fn label(self) -> &'static str {
+        match self {
+            Phase::Before => "До обучения",
+            Phase::After => "После обучения",
+            Phase::Later => "Через неделю",
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Checkpoint {
+    pub phase: Phase,
+    pub at: u64,
+    pub solved: u32,
+    pub total: u32,
+    pub seconds: f32,
+}
 /// A miss in a sprint adds this many seconds to the time.
 pub const SPRINT_PENALTY: f32 = 10.0;
 /// Clean successes needed at levels 1, 2, 3 before the next level.
@@ -85,6 +118,8 @@ pub struct Profile {
     #[serde(default)]
     pub english: bool,
     /// "Which method" questions: answered right on the first pick / asked.
+    #[serde(default)]
+    pub checkpoints: Vec<Checkpoint>,
     #[serde(default)]
     pub method_right: u32,
     #[serde(default)]
@@ -248,6 +283,7 @@ impl Default for Profile {
             sound: true,
             dark: false,
             english: false,
+            checkpoints: Vec::new(),
             method_right: 0,
             method_total: 0,
             gems: 50,
@@ -301,6 +337,8 @@ pub enum Slot {
     TestOut(String),
     /// Speed run at a fixed level so times are comparable.
     Sprint(String),
+    /// Skill check task: fixed level, no hints, no retries, no effect on the staircase.
+    Check(String),
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -323,6 +361,9 @@ pub struct Lesson {
     pub goal_total: f32,
     #[serde(default)]
     pub misses: u32,
+    /// A skill check rather than a lesson.
+    #[serde(default)]
+    pub checkpoint: Option<Phase>,
 }
 
 impl Lesson {
@@ -446,11 +487,12 @@ impl Profile {
         let seed = self.seed();
         let id = match slot {
             Slot::Frontier => self.frontier().map(str::to_string).unwrap_or_else(|| self.weakest()),
-            Slot::Review(s) | Slot::Mix(s) | Slot::Retry(s) | Slot::Focus(s) | Slot::TestOut(s) | Slot::Sprint(s) => s.clone(),
+            Slot::Review(s) | Slot::Mix(s) | Slot::Retry(s) | Slot::Focus(s) | Slot::TestOut(s) | Slot::Sprint(s) | Slot::Check(s) => s.clone(),
         };
         let level = match slot {
             Slot::TestOut(_) => self.level(&id).max(3),
             Slot::Sprint(_) => SPRINT_LEVEL,
+            Slot::Check(_) => CHECKPOINT_LEVEL,
             _ => self.level(&id).max(1),
         };
         // A retry steps down one level so the second attempt is likely to succeed.
@@ -635,6 +677,57 @@ impl Profile {
 
     /// A finished blitz: XP by points, quest and badge.
     /// One solved task in the accounting program: base XP plus a speed bonus against par.
+    /// Battery skills already at level 3 or higher.
+    pub fn checkpoint_trained(&self) -> usize {
+        CHECKPOINT_SKILLS.iter().filter(|s| self.level(s) >= 3).count()
+    }
+
+    /// Which skill check is due, or why none is open yet.
+    pub fn next_checkpoint(&self, now: u64) -> Result<Phase, String> {
+        let last_after = self.checkpoints.iter().rev().find(|c| c.phase == Phase::After);
+        let last = self.checkpoints.last();
+        match last.map(|c| c.phase) {
+            None => Ok(Phase::Before),
+            Some(Phase::Before) => {
+                let n = self.checkpoint_trained();
+                if n >= CHECKPOINT_TRAINED {
+                    Ok(Phase::After)
+                } else {
+                    Err(gridcraft_tr::t(&format!(
+                        "Откроется, когда {CHECKPOINT_TRAINED} из {} навыков среза дойдут до уровня «Сам» (сейчас {n}).",
+                        CHECKPOINT_SKILLS.len()
+                    )))
+                }
+            }
+            Some(Phase::After) => {
+                let at = last_after.map(|c| c.at).unwrap_or(now);
+                let ready = at + 7 * DAY;
+                if now >= ready {
+                    Ok(Phase::Later)
+                } else {
+                    let days = (ready - now).div_ceil(DAY);
+                    Err(gridcraft_tr::t(&format!("Отложенный срез — через неделю после итогового, осталось {days} дн.")))
+                }
+            }
+            // A new round: train more, then measure again.
+            Some(Phase::Later) => Ok(Phase::After),
+        }
+    }
+
+    pub fn plan_checkpoint(&mut self, phase: Phase) -> Lesson {
+        let queue: VecDeque<Slot> = CHECKPOINT_SKILLS.iter().map(|s| Slot::Check((*s).to_string())).collect();
+        Lesson { total: queue.len(), queue, retries: 3, checkpoint: Some(phase), ..Lesson::default() }
+    }
+
+    /// Stores a finished skill check. Effort counts for the day, not the score.
+    pub fn record_checkpoint(&mut self, c: Checkpoint, now: u64) -> Change {
+        let mut change = Change::default();
+        self.add_xp(20, now, &mut change);
+        change.xp = 20;
+        self.checkpoints.push(c);
+        change
+    }
+
     /// The first pick on a "which method" question. A wrong tool sends its skill back for practice.
     pub fn record_choice(&mut self, skill: &str, ok: bool) {
         self.method_total += 1;

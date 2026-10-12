@@ -196,6 +196,32 @@ fn side_column(app: &mut LearningApp, ui: &mut Ui, p: &Palette, t: u64, frontier
         }
     });
     card(ui, p, None, |ui| {
+        ui.label(RichText::new(ts("📈 Срез навыка")).size(17.0).strong().color(p.text));
+        ui.label(
+            RichText::new(ts("8 задач на новых данных, без подсказок. Пройди до обучения, после и через неделю — увидишь, держится ли навык."))
+                .size(13.0)
+                .color(p.muted),
+        );
+        ui.add_space(6.0);
+        match app.profile.next_checkpoint(now()) {
+            Ok(phase) => {
+                let label = tr(&format!("СРЕЗ: {}", ts(phase.label()).to_uppercase()));
+                if big_button(ui, &label, Color32::from_rgb(20, 160, 170), vec2(ui.available_width(), 44.0)).clicked() {
+                    let r = app.start_checkpoint();
+                    app.handle(r);
+                }
+            }
+            Err(why) => {
+                ui.label(RichText::new(why).size(12.0).color(p.muted));
+            }
+        }
+        let line: Vec<String> =
+            app.profile.checkpoints.iter().rev().take(3).rev().map(|c| format!("{} {}/{}", ts(c.phase.label()), c.solved, c.total)).collect();
+        if !line.is_empty() {
+            ui.label(RichText::new(line.join(" · ")).size(12.0).color(p.muted));
+        }
+    });
+    card(ui, p, None, |ui| {
         ui.label(RichText::new(ts("📒 Учёт")).size(17.0).strong().color(p.text));
         ui.label(
             RichText::new(ts(
@@ -496,6 +522,7 @@ pub fn lesson(app: &mut LearningApp, ui: &mut Ui) {
         .show(ui, |ui| {
             ui.horizontal(|ui| {
                 let (tag, fg, bg) = match &slot {
+                    Some(Slot::Check(_)) => (ts("СРЕЗ"), Color32::WHITE, Color32::from_rgb(20, 160, 170)),
                     Some(Slot::Review(_)) => (ts("ПОВТОРЕНИЕ"), Color32::WHITE, p.blue),
                     Some(Slot::Mix(_)) => (ts("ВПЕРЕМЕШКУ"), Color32::WHITE, Color32::from_rgb(168, 85, 247)),
                     Some(Slot::Retry(_)) => (ts("РАБОТА НАД ОШИБКОЙ"), Color32::WHITE, p.red),
@@ -505,7 +532,8 @@ pub fn lesson(app: &mut LearningApp, ui: &mut Ui) {
                     _ => (ts("ТРЕНИРОВКА"), Color32::WHITE, p.green_dark),
                 };
                 chip(ui, tag, fg, bg);
-                if !choosing {
+                // A skill check and an open method question don't give the tool away.
+                if !choosing && !matches!(slot, Some(Slot::Check(_))) {
                     chip(ui, &task.skill_name(), p.text, p.card);
                 }
                 chip(ui, &tr(&format!("Уровень {}: {}", task.spec.level, level_name(task.spec.level))), p.muted, p.card);
@@ -550,13 +578,15 @@ pub fn lesson(app: &mut LearningApp, ui: &mut Ui) {
             if choice_card(app, ui, &p, true) {
                 return;
             }
+            let checkpoint = matches!(slot, Some(Slot::Check(_)));
             ui.horizontal(|ui| {
-                let can_hint = (hints_used as usize) < task.hints.len() && app.feedback.is_none();
+                let can_hint = (hints_used as usize) < task.hints.len() && app.feedback.is_none() && !checkpoint;
                 if ui.add_enabled(can_hint, egui::Button::new(tr(&format!("💡 Подсказка ({}/{})", hints_used, task.hints.len())))).clicked()
                 {
                     app.hint();
                 }
-                if ui.add_enabled(app.feedback.is_none(), egui::Button::new(ts("✔ Проверить  (Ctrl+Enter)"))).clicked() {
+                let submit = if checkpoint { ts("✔ Сдать ответ  (Ctrl+Enter)") } else { ts("✔ Проверить  (Ctrl+Enter)") };
+                if ui.add_enabled(app.feedback.is_none(), egui::Button::new(submit)).clicked() {
                     let r = app.check();
                     app.handle(r);
                 }
@@ -564,7 +594,7 @@ pub fn lesson(app: &mut LearningApp, ui: &mut Ui) {
                     let r = app.advance();
                     app.handle(r);
                 }
-                if app.ai_config.is_some() {
+                if app.ai_config.is_some() && !checkpoint {
                     let ok = app.ai_consent && app.ai_pending.is_none() && app.ai_requests < 20;
                     if ui
                         .add_enabled(ok, egui::Button::new(ts("🤖 Подсказка AI")))
@@ -574,7 +604,9 @@ pub fn lesson(app: &mut LearningApp, ui: &mut Ui) {
                         app.ask_ai();
                     }
                 }
-                let note = if task.sql.is_some() {
+                let note = if checkpoint {
+                    ts("Срез: подсказок нет, ответ засчитывается с первой попытки. Верный ответ примется сам.")
+                } else if task.sql.is_some() {
                     ts("Ctrl+Enter — выполнить запрос; верный результат засчитается сам.")
                 } else {
                     ts("Ответ проверяется сам, когда заполнишь жёлтые ячейки.")
@@ -977,7 +1009,29 @@ pub fn done(app: &mut LearningApp, ui: &mut Ui) {
                 mascot(ui, 140.0, Mood::Cheer, &p);
                 ui.add_space(10.0 - bounce.min(10.0));
                 let Some(s) = &app.summary else { return };
-                if let Some(sp) = &s.sprint {
+                if let Some(c) = &s.checkpoint {
+                    ui.label(RichText::new(tr(&format!("Срез «{}» пройден", ts(c.phase.label())))).size(34.0).strong().color(p.text));
+                    ui.label(RichText::new(format!("{} / {}", c.solved, c.total)).size(56.0).strong().color(Color32::from_rgb(20, 160, 170)));
+                    ui.label(RichText::new(tr(&format!("за {}", clock(c.seconds)))).size(18.0).color(p.muted));
+                    let earlier = app.profile.checkpoints.iter().rev().nth(1);
+                    if let Some(e) = earlier {
+                        let d = c.solved as i64 - e.solved as i64;
+                        let text = match d {
+                            d if d > 0 => tr(&format!("На {d} больше, чем на срезе «{}». Навык растёт!", ts(e.phase.label()))),
+                            0 => tr(&format!("Столько же, сколько на срезе «{}».", ts(e.phase.label()))),
+                            d => tr(&format!("На {} меньше, чем на срезе «{}» — повтори слабые навыки.", -d, ts(e.phase.label()))),
+                        };
+                        ui.label(RichText::new(text).size(18.0).strong().color(if d >= 0 { p.green_dark } else { p.orange }));
+                    }
+                    let next = match c.phase {
+                        gridcraft_learn_core::profile::Phase::Before => {
+                            ts("Теперь учись. Срез «После обучения» откроется, когда 5 из 8 навыков дойдут до уровня «Сам».")
+                        }
+                        gridcraft_learn_core::profile::Phase::After => ts("Через неделю — отложенный срез: проверим, что навык не выветрился."),
+                        gridcraft_learn_core::profile::Phase::Later => ts("Цикл замеров завершён. Все результаты — в статистике."),
+                    };
+                    ui.label(RichText::new(next).size(14.0).color(p.muted));
+                } else if let Some(sp) = &s.sprint {
                     ui.label(RichText::new(ts("Спринт завершён!")).size(34.0).strong().color(p.orange));
                     ui.label(RichText::new(clock(up(sp.seconds))).size(56.0).strong().color(p.text));
                     let mut line = sp.medal.label().to_string();
@@ -1024,17 +1078,19 @@ pub fn done(app: &mut LearningApp, ui: &mut Ui) {
                     ui.label(RichText::new(tr(&format!("🔥 {} дн. подряд!", s.streak))).size(20.0).strong().color(p.orange));
                 }
                 ui.add_space(16.0);
-                ui.horizontal(|ui| {
-                    let w = 4.0 * 136.0 + 3.0 * 12.0;
-                    ui.add_space(((ui.available_width() - w) / 2.0).max(0.0));
-                    tile(ui, &p, ts("ОПЫТ"), &format!("⚡ {:.0}", up(s.xp as f32)), p.gold);
-                    ui.add_space(12.0);
-                    tile(ui, &p, ts("ТОЧНОСТЬ"), &format!("🎯 {:.0}%", up(s.accuracy * 100.0)), p.green);
-                    ui.add_space(12.0);
-                    tile(ui, &p, ts("КРИСТАЛЛЫ"), &format!("💎 {:.0}", up(s.gems as f32)), p.blue);
-                    ui.add_space(12.0);
-                    tile(ui, &p, ts("КОМБО"), &format!("🔥 {:.0}", up(s.best_combo as f32)), p.orange);
-                });
+                if s.checkpoint.is_none() {
+                    ui.horizontal(|ui| {
+                        let w = 4.0 * 136.0 + 3.0 * 12.0;
+                        ui.add_space(((ui.available_width() - w) / 2.0).max(0.0));
+                        tile(ui, &p, ts("ОПЫТ"), &format!("⚡ {:.0}", up(s.xp as f32)), p.gold);
+                        ui.add_space(12.0);
+                        tile(ui, &p, ts("ТОЧНОСТЬ"), &format!("🎯 {:.0}%", up(s.accuracy * 100.0)), p.green);
+                        ui.add_space(12.0);
+                        tile(ui, &p, ts("КРИСТАЛЛЫ"), &format!("💎 {:.0}", up(s.gems as f32)), p.blue);
+                        ui.add_space(12.0);
+                        tile(ui, &p, ts("КОМБО"), &format!("🔥 {:.0}", up(s.best_combo as f32)), p.orange);
+                    });
+                }
                 for l in &s.level_ups {
                     ui.add_space(6.0);
                     ui.label(RichText::new(format!("⬆ {l}")).size(17.0).strong().color(p.green_dark));
@@ -1538,6 +1594,47 @@ pub fn stats(app: &mut LearningApp, ui: &mut Ui) {
                         ui.end_row();
                     }
                 });
+                ui.add_space(16.0);
+                ui.label(RichText::new(ts("📈 Замер прогресса")).size(18.0).strong().color(p.text));
+                ui.label(
+                    RichText::new(ts("Одни и те же 8 навыков на новых данных: до обучения, после и через неделю. Рост «до → после» — навык появился, «после → через неделю» — удержался."))
+                        .size(12.0)
+                        .color(p.muted),
+                );
+                if prof.checkpoints.is_empty() {
+                    ui.label(RichText::new(ts("Срезов пока нет — начни со среза «До обучения» на главной.")).color(p.muted));
+                } else {
+                    egui::Grid::new("checkpoints").striped(true).min_col_width(110.0).show(ui, |ui| {
+                        for h in [ts("Срез"), ts("Когда"), ts("Решено"), ts("Время")] {
+                            ui.label(RichText::new(h).strong());
+                        }
+                        ui.end_row();
+                        let t = now();
+                        for c in &prof.checkpoints {
+                            let days = t.saturating_sub(c.at) / gridcraft_learn_core::profile::DAY;
+                            ui.label(ts(c.phase.label()));
+                            ui.label(if days == 0 { ts("сегодня").to_string() } else { tr(&format!("{days} дн. назад")) });
+                            ui.label(format!("{}/{}", c.solved, c.total));
+                            ui.label(clock(c.seconds));
+                            ui.end_row();
+                        }
+                    });
+                    let first = prof.checkpoints.first();
+                    let last = prof.checkpoints.last();
+                    if let (Some(a), Some(b)) = (first, last)
+                        && prof.checkpoints.len() > 1
+                    {
+                        let d = b.solved as i64 - a.solved as i64;
+                        let sign = if d > 0 { "+" } else { "" };
+                        ui.label(RichText::new(tr(&format!("С первого среза: {sign}{d} задач", ))).strong().color(if d >= 0 { p.green_dark } else { p.red }));
+                    }
+                }
+                if prof.method_total > 0 {
+                    ui.add_space(6.0);
+                    ui.label(
+                        RichText::new(tr(&format!("Выбор метода: {} из {} верно с первого раза", prof.method_right, prof.method_total))).color(p.text),
+                    );
+                }
                 ui.add_space(16.0);
                 ui.label(RichText::new(ts("Навыки")).size(18.0).strong().color(p.text));
                 ui.label(

@@ -15,7 +15,7 @@ use gridcraft_learn_core::{
     Current, Evaluation, Interview, LearnError, Lesson, Mode, Profile, SAVE_VERSION, Save, Slot, Spec, Task,
     content::{self, CASES},
     evaluate,
-    profile::{Change, Medal, SPRINT_PENALTY, Speed, SprintResult, achievement},
+    profile::{Change, Checkpoint, Medal, SPRINT_PENALTY, Speed, SprintResult, achievement},
     quiz::{self, BlitzResult, Question, Track},
     sql::{self, ResultSet},
 };
@@ -142,6 +142,7 @@ pub struct SprintSummary {
 }
 
 pub struct Summary {
+    pub checkpoint: Option<Checkpoint>,
     pub sprint: Option<SprintSummary>,
     pub perfect: bool,
     pub gems: u32,
@@ -401,6 +402,21 @@ impl LearningApp {
         }
     }
 
+    /// The skill check that is due: eight tasks, new data, no hints.
+    pub fn start_checkpoint(&mut self) -> Result<(), LearnError> {
+        let phase = match self.profile.next_checkpoint(now()) {
+            Ok(p) => p,
+            Err(why) => {
+                self.notice = Some(why);
+                return Ok(());
+            }
+        };
+        let lesson = self.profile.plan_checkpoint(phase);
+        self.streak_extended = false;
+        self.screen = Screen::Lesson;
+        self.next_in_lesson(lesson)
+    }
+
     /// Speed run: ten tasks against the clock (one skill, or a mix).
     pub fn start_sprint(&mut self, skill: Option<&str>) -> Result<(), LearnError> {
         let lesson = self.profile.plan_sprint(skill);
@@ -473,11 +489,18 @@ impl LearningApp {
             SprintSummary { kind, seconds, misses: lesson.misses, medal, record, previous, par: lesson.goal_total }
         });
         self.sprint_clock = None;
+        let checkpoint = lesson.checkpoint.map(|phase| {
+            let c = Checkpoint { phase, at: now(), solved: lesson.first_try as u32, total: lesson.done as u32, seconds: lesson.seconds };
+            let change = self.profile.record_checkpoint(c.clone(), now());
+            self.celebrate(&change);
+            c
+        });
         let perfect = lesson.done > 0 && lesson.first_try == lesson.done;
         let test_out = lesson.level_ups.iter().any(|l| l.starts_with('⏩'));
         let change = self.profile.finish_lesson(perfect, lesson.best_combo, now());
         self.celebrate(&change);
         self.summary = Some(Summary {
+            checkpoint,
             sprint,
             perfect,
             gems: change.gems,
@@ -558,6 +581,23 @@ impl LearningApp {
         let eval = if a.task.sql.is_some() { sql::evaluate(&a.task, &a.query)? } else { evaluate(&a.task, &self.sheet.session, &self.keys)? };
         self.graded_revision = self.revision();
         let passed = eval.passed();
+        if a.lesson.as_ref().is_some_and(|l| l.checkpoint.is_some()) {
+            // A skill check grades once and moves on; the staircase is not touched.
+            if let Some(a) = self.active.as_mut() {
+                let secs = a.seconds();
+                a.recorded = true;
+                if let Some(l) = a.lesson.as_mut() {
+                    l.seconds += secs;
+                    if passed {
+                        l.first_try += 1;
+                    } else {
+                        l.misses += 1;
+                    }
+                }
+            }
+            self.cue(if passed { Cue::Correct } else { Cue::Wrong });
+            return self.advance();
+        }
         let seconds = a.seconds();
         let hints = a.hints;
         let first = !a.recorded;
@@ -786,7 +826,16 @@ impl LearningApp {
     pub fn advance(&mut self) -> Result<(), LearnError> {
         let Some(a) = self.active.take() else { return Ok(()) };
         let passed = self.feedback.as_ref().is_some_and(|f| f.passed);
-        if !a.recorded {
+        let mut a = a;
+        let checkpoint = a.lesson.as_ref().is_some_and(|l| l.checkpoint.is_some());
+        if checkpoint && !a.recorded {
+            // Skipped in a skill check: a miss, with its time.
+            let secs = a.seconds();
+            if let Some(l) = a.lesson.as_mut() {
+                l.seconds += secs;
+                l.misses += 1;
+            }
+        } else if !a.recorded {
             self.profile.record(&a.task, false, a.seconds(), a.hints, 0, false, now());
         }
         self.feedback = None;
@@ -846,7 +895,9 @@ impl LearningApp {
             return;
         }
         let cells = a.task.answer_cells();
-        if cells.is_empty() {
+        // In a skill check only a correct answer moves on by itself; a wrong one waits for "Submit".
+        let checkpoint = a.lesson.as_ref().is_some_and(|l| l.checkpoint.is_some());
+        if cells.is_empty() || checkpoint {
             match evaluate(&a.task, &self.sheet.session, &self.keys) {
                 Ok(e) if e.passed() => {
                     let r = self.check();
