@@ -5,6 +5,7 @@ use crate::catalog::Sub;
 use crate::document::{self, Body};
 use crate::money::{Date, Money};
 use crate::{Book, DocKind, report};
+use gridcraft_tr::{t as tr, ts};
 
 #[derive(Clone, Debug)]
 pub enum Check {
@@ -75,7 +76,7 @@ impl Task {
                         Err(e) => nearest = Some(e),
                     }
                 }
-                Err(nearest.unwrap_or_else(|| format!("Нет проведённого документа «{}» за этот месяц", kind.title())))
+                Err(nearest.unwrap_or_else(|| tr(&format!("Нет проведённого документа «{}» за этот месяц", kind.title()))))
             }
             Check::Balance { account, sub, at, want } => {
                 let got = match sub {
@@ -86,16 +87,16 @@ impl Task {
                         .map(|r| r.row.close_dt - r.row.close_kt)
                         .unwrap_or_default(),
                 };
-                if got == *want { Ok(()) } else { Err(format!("Сальдо счёта {account} на {at}: {got}, а нужно {want}")) }
+                if got == *want { Ok(()) } else { Err(tr(&format!("Сальдо счёта {account} на {at}: {got}, а нужно {want}"))) }
             }
             Check::Closed { accounts, at } => {
                 if !book.docs.iter().any(|d| d.posted && d.body.kind() == DocKind::MonthClose && d.date.y == at.y && d.date.m == at.m) {
-                    return Err("Нет проведённого закрытия месяца".into());
+                    return Err(ts("Нет проведённого закрытия месяца").into());
                 }
                 for a in *accounts {
                     let b = report::balance(book, a, *at);
                     if !b.is_zero() {
-                        return Err(format!("На {at} у счёта {a} остался остаток {b}"));
+                        return Err(tr(&format!("На {at} у счёта {a} остался остаток {b}")));
                     }
                 }
                 Ok(())
@@ -104,8 +105,8 @@ impl Task {
                 let want = self.expected(book).unwrap_or_default();
                 match answer {
                     Some(a) if a == want => Ok(()),
-                    Some(a) => Err(format!("{a} — не сходится. Сверься с отчётом")),
-                    None => Err("Введи число".into()),
+                    Some(a) => Err(tr(&format!("{a} — не сходится. Сверься с отчётом"))),
+                    None => Err(ts("Введи число").into()),
                 }
             }
         }
@@ -117,7 +118,7 @@ fn matches(body: &Body, w: &Want) -> Result<(), String> {
     if let Some(a) = w.amount
         && total != a
     {
-        return Err(format!("Сумма документа {total}, а нужно {a}"));
+        return Err(tr(&format!("Сумма документа {total}, а нужно {a}")));
     }
     let party_ok = |id: u32| w.party.is_none_or(|p| p == id);
     let emp_ok = |id: u32| w.employee.is_none_or(|p| p == id);
@@ -126,48 +127,48 @@ fn matches(body: &Body, w: &Want) -> Result<(), String> {
             return Ok(());
         }
         let ok = lines.iter().any(|l| w.item.is_none_or(|i| i == l.item) && w.qty.is_none_or(|q| q == l.qty));
-        if ok { Ok(()) } else { Err("Номенклатура или количество не те".into()) }
+        if ok { Ok(()) } else { Err(ts("Номенклатура или количество не те").into()) }
     };
     match body {
         Body::Receipt { supplier, account, lines } => {
             if !party_ok(*supplier) {
-                return Err("Не тот поставщик".into());
+                return Err(ts("Не тот поставщик").into());
             }
             if w.account.is_some_and(|a| a != account) {
-                return Err("Не тот счёт учёта".into());
+                return Err(ts("Не тот счёт учёта").into());
             }
             goods(lines)
         }
         Body::Sale { customer, lines } => {
             if !party_ok(*customer) {
-                return Err("Не тот покупатель".into());
+                return Err(ts("Не тот покупатель").into());
             }
             goods(lines)
         }
         Body::Services { supplier, lines } => {
             if !party_ok(*supplier) {
-                return Err("Не тот поставщик".into());
+                return Err(ts("Не тот поставщик").into());
             }
             if let Some(a) = w.account
                 && !lines.iter().all(|l| l.account == a)
             {
-                return Err(format!("Затраты должны идти на счёт {a}"));
+                return Err(tr(&format!("Затраты должны идти на счёт {a}")));
             }
             Ok(())
         }
         Body::BankIn { from, .. } => match from {
             document::BankIn::Customer(c) | document::BankIn::Loan(c) if party_ok(*c) => Ok(()),
-            _ => Err("Не тот плательщик или вид операции".into()),
+            _ => Err(ts("Не тот плательщик или вид операции").into()),
         },
         Body::BankOut { to, .. } => match to {
             document::BankOut::Supplier(c) | document::BankOut::LoanRepay(c) if party_ok(*c) && w.account.is_none() => Ok(()),
             document::BankOut::Tax(a) if w.account == Some(a.as_str()) => Ok(()),
             document::BankOut::Salary(e) if emp_ok(*e) && w.employee.is_some() => Ok(()),
-            _ => Err("Не тот получатель или вид операции".into()),
+            _ => Err(ts("Не тот получатель или вид операции").into()),
         },
         Body::CashOut { to, .. } => match to {
             document::CashOut::Advance(e) if emp_ok(*e) => Ok(()),
-            _ => Err("Нужна выдача под отчёт нужному сотруднику".into()),
+            _ => Err(ts("Нужна выдача под отчёт нужному сотруднику").into()),
         },
         Body::CashIn { .. }
         | Body::AdvanceReport { .. }
@@ -177,10 +178,10 @@ fn matches(body: &Body, w: &Want) -> Result<(), String> {
         | Body::MonthClose => Ok(()),
         Body::Payroll { account, lines } => {
             if w.account.is_some_and(|a| a != account) {
-                return Err("Не тот счёт затрат".into());
+                return Err(ts("Не тот счёт затрат").into());
             }
             if w.lines.is_some_and(|n| lines.len() < n) {
-                return Err("Начислены не все сотрудники".into());
+                return Err(ts("Начислены не все сотрудники").into());
             }
             Ok(())
         }
@@ -210,79 +211,79 @@ pub fn february(seed: u64) -> Vec<Task> {
     let advance = r.int(2, 6) * 500;
     vec![
         Task {
-            title: "Поступление товаров".into(),
-            text: format!("От ООО «Бумажный двор» пришли {q_in} пачек бумаги А4 на {} ₽ с НДС. Оформи поступление на счёт 41 в феврале и проведи.", Money::rub(q_in * price_in)),
-            hint: "📒 ⬇ Закупки → «+ Поступление товаров и материалов». Поставщик, номенклатура, количество, сумма → «Провести и закрыть».".into(),
+            title: ts("Поступление товаров").into(),
+            text: tr(&format!("От ООО «Бумажный двор» пришли {q_in} пачек бумаги А4 на {} ₽ с НДС. Оформи поступление на счёт 41 в феврале и проведи.", Money::rub(q_in * price_in))),
+            hint: ts("📒 ⬇ Закупки → «+ Поступление товаров и материалов». Поставщик, номенклатура, количество, сумма → «Провести и закрыть».").into(),
             check: Check::Posted { kind: DocKind::Receipt, month: feb, want: Want { party: Some(1), item: Some(1), qty: Some(q_in), amount: Some(Money::rub(q_in * price_in)), account: Some("41"), ..Want::default() } },
             goal_seconds: 60,
         },
         Task {
-            title: "Реализация".into(),
-            text: format!("АО «Офис-Плюс» купило {q_out} пачек бумаги А4 за {} ₽ с НДС. Оформи реализацию в феврале и проведи.", Money::rub(q_out * price_out)),
-            hint: "⬆ Продажи → «+ Реализация товаров». Посмотри проводки: выручка 62/90.01, НДС 90.03/68.02, себестоимость 90.02/41.".into(),
+            title: ts("Реализация").into(),
+            text: tr(&format!("АО «Офис-Плюс» купило {q_out} пачек бумаги А4 за {} ₽ с НДС. Оформи реализацию в феврале и проведи.", Money::rub(q_out * price_out))),
+            hint: ts("⬆ Продажи → «+ Реализация товаров». Посмотри проводки: выручка 62/90.01, НДС 90.03/68.02, себестоимость 90.02/41.").into(),
             check: Check::Posted { kind: DocKind::Sale, month: feb, want: Want { party: Some(4), item: Some(1), qty: Some(q_out), amount: Some(Money::rub(q_out * price_out)), ..Want::default() } },
             goal_seconds: 50,
         },
         Task {
-            title: "Оплата от покупателя".into(),
-            text: "АО «Офис-Плюс» перечислило на расчётный счёт весь свой долг. Оформи поступление на счёт так, чтобы на 28.02 долг покупателя был 0.".into(),
-            hint: "Сколько должен покупатель — смотри 📊 Отчёты → Карточка счёта 62 или Справочники → Контрагенты. Затем 💰 Деньги → «+ Поступление на расчётный счёт».".into(),
+            title: ts("Оплата от покупателя").into(),
+            text: ts("АО «Офис-Плюс» перечислило на расчётный счёт весь свой долг. Оформи поступление на счёт так, чтобы на 28.02 долг покупателя был 0.").into(),
+            hint: ts("Сколько должен покупатель — смотри 📊 Отчёты → Карточка счёта 62 или Справочники → Контрагенты. Затем 💰 Деньги → «+ Поступление на расчётный счёт».").into(),
             check: Check::Balance { account: "62", sub: Some(Sub::Counterparty(4)), at: end, want: Money::ZERO },
             goal_seconds: 70,
         },
         Task {
-            title: "Оплата поставщику".into(),
-            text: "Погаси весь долг перед ООО «Бумажный двор» с расчётного счёта (с учётом февральской поставки). На 28.02 сальдо 60 по нему должно быть 0.".into(),
-            hint: "Долг = кредитовое сальдо 60 по поставщику. 💰 Деньги → «+ Списание с расчётного счёта», вид «Оплата поставщику».".into(),
+            title: ts("Оплата поставщику").into(),
+            text: ts("Погаси весь долг перед ООО «Бумажный двор» с расчётного счёта (с учётом февральской поставки). На 28.02 сальдо 60 по нему должно быть 0.").into(),
+            hint: ts("Долг = кредитовое сальдо 60 по поставщику. 💰 Деньги → «+ Списание с расчётного счёта», вид «Оплата поставщику».").into(),
             check: Check::Balance { account: "60", sub: Some(Sub::Counterparty(1)), at: end, want: Money::ZERO },
             goal_seconds: 70,
         },
         Task {
-            title: "Аренда".into(),
-            text: "Пришёл акт от ООО «БЦ Северный»: аренда офиса за февраль 61 000 ₽, в т.ч. НДС 22%. Отрази на счёте 26 и проведи.".into(),
-            hint: "⬇ Закупки → «+ Поступление услуг», счёт затрат 26, НДС 22%.".into(),
+            title: ts("Аренда").into(),
+            text: ts("Пришёл акт от ООО «БЦ Северный»: аренда офиса за февраль 61 000 ₽, в т.ч. НДС 22%. Отрази на счёте 26 и проведи.").into(),
+            hint: ts("⬇ Закупки → «+ Поступление услуг», счёт затрат 26, НДС 22%.").into(),
             check: Check::Posted { kind: DocKind::Services, month: feb, want: Want { party: Some(5), amount: Some(Money::rub(61_000)), account: Some("26"), ..Want::default() } },
             goal_seconds: 45,
         },
         Task {
-            title: "Под отчёт".into(),
-            text: format!("Выдай Ким Анне Викторовне {} ₽ из кассы под отчёт.", Money::rub(advance)),
-            hint: "💰 Деньги → «+ Расходный кассовый ордер», вид «Выдача под отчёт». Проводка Дт 71 Кт 50.".into(),
+            title: ts("Под отчёт").into(),
+            text: tr(&format!("Выдай Ким Анне Викторовне {} ₽ из кассы под отчёт.", Money::rub(advance))),
+            hint: ts("💰 Деньги → «+ Расходный кассовый ордер», вид «Выдача под отчёт». Проводка Дт 71 Кт 50.").into(),
             check: Check::Posted { kind: DocKind::CashOut, month: feb, want: Want { employee: Some(3), amount: Some(Money::rub(advance)), ..Want::default() } },
             goal_seconds: 35,
         },
         Task {
-            title: "НДФЛ за январь".into(),
-            text: "Перечисли в бюджет НДФЛ, удержанный с январской зарплаты (сальдо 68.01 на 31.01).".into(),
-            hint: "Сумма — кредитовое сальдо 68.01 на 31.01 в ОСВ. 💰 Деньги → «+ Списание с расчётного счёта», вид «Уплата налога», налог 68.01.".into(),
+            title: ts("НДФЛ за январь").into(),
+            text: ts("Перечисли в бюджет НДФЛ, удержанный с январской зарплаты (сальдо 68.01 на 31.01).").into(),
+            hint: ts("Сумма — кредитовое сальдо 68.01 на 31.01 в ОСВ. 💰 Деньги → «+ Списание с расчётного счёта», вид «Уплата налога», налог 68.01.").into(),
             check: Check::Posted { kind: DocKind::BankOut, month: feb, want: Want { amount: Some(Money::rub(35_750)), account: Some("68.01"), ..Want::default() } },
             goal_seconds: 60,
         },
         Task {
-            title: "Зарплата за февраль".into(),
-            text: "Начисли зарплату за февраль всем трём сотрудникам по окладу на счёт 26.".into(),
-            hint: "👥 Сотрудники → «+ Начисление зарплаты»: оклады подставятся сами. Посмотри проводки НДФЛ и взносов.".into(),
+            title: ts("Зарплата за февраль").into(),
+            text: ts("Начисли зарплату за февраль всем трём сотрудникам по окладу на счёт 26.").into(),
+            hint: ts("👥 Сотрудники → «+ Начисление зарплаты»: оклады подставятся сами. Посмотри проводки НДФЛ и взносов.").into(),
             check: Check::Posted { kind: DocKind::Payroll, month: feb, want: Want { amount: Some(Money::rub(275_000)), account: Some("26"), lines: Some(3), ..Want::default() } },
             goal_seconds: 40,
         },
         Task {
-            title: "Закрытие февраля".into(),
-            text: "Закрой февраль: после закрытия на 28.02 у счетов 19, 26 и 44 не должно быть остатка.".into(),
-            hint: "🏁 Конец месяца → «+ Закрытие месяца», дата 28.02.2026.".into(),
+            title: ts("Закрытие февраля").into(),
+            text: ts("Закрой февраль: после закрытия на 28.02 у счетов 19, 26 и 44 не должно быть остатка.").into(),
+            hint: ts("🏁 Конец месяца → «+ Закрытие месяца», дата 28.02.2026.").into(),
             check: Check::Closed { accounts: &["19", "26", "44"], at: end },
             goal_seconds: 30,
         },
         Task {
-            title: "НДС к уплате".into(),
-            text: "Сколько НДС к уплате на 28.02? Это кредитовое сальдо счёта 68.02. Введи сумму.".into(),
-            hint: "📊 Отчёты → Оборотно-сальдовая ведомость за январь–февраль, строка 68.02, «Кон. Кт».".into(),
+            title: ts("НДС к уплате").into(),
+            text: ts("Сколько НДС к уплате на 28.02? Это кредитовое сальдо счёта 68.02. Введи сумму.").into(),
+            hint: ts("📊 Отчёты → Оборотно-сальдовая ведомость за январь–февраль, строка 68.02, «Кон. Кт».").into(),
             check: Check::ReadBalance { account: "68.02", at: end, credit: true },
             goal_seconds: 40,
         },
         Task {
-            title: "Прибыль от продаж".into(),
-            text: "Какой финансовый результат от продаж за февраль? Убыток — со знаком минус.".into(),
-            hint: "📊 Отчёты → Финансовый результат, период февраль.".into(),
+            title: ts("Прибыль от продаж").into(),
+            text: ts("Какой финансовый результат от продаж за февраль? Убыток — со знаком минус.").into(),
+            hint: ts("📊 Отчёты → Финансовый результат, период февраль.").into(),
             check: Check::ReadSalesProfit { month: feb },
             goal_seconds: 40,
         },

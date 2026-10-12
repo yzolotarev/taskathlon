@@ -6,6 +6,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let output = std::env::args().nth(1).unwrap_or_else(|| "learn-snapshot.png".into());
     let which = std::env::args().nth(2).unwrap_or_else(|| "home".into());
     let mut app = LearningApp::new(None)?;
+    if std::env::var_os("SNAP_EN").is_some() {
+        app.profile.english = true;
+        gridcraft_tr::set_english(true);
+        app.sheet.ui.language = gridcraft_ui_egui::i18n::Language::En;
+        app.greeting = Some(gridcraft_learn::remind::greeting(&app.profile, gridcraft_learn::now()));
+    }
     match which.as_str() {
         "lesson" => app.start_lesson(None)?,
         "wrong" => {

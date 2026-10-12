@@ -5,6 +5,7 @@ use crate::accounts::{self, Kind};
 use crate::catalog::Sub;
 use crate::money::{Date, Money};
 use crate::{Book, Entry};
+use gridcraft_tr::ts;
 use std::collections::BTreeMap;
 
 /// One row of a trial balance: opening, turnover and closing, split into debit and credit.
@@ -97,12 +98,12 @@ fn row_for(book: &Book, code: &str, name: &str, from: Date, to: Date) -> Row {
 /// row is the total.
 pub fn trial_balance(book: &Book, from: Date, to: Date) -> Vec<Row> {
     let mut rows: Vec<Row> = Vec::new();
-    let mut total = Row { code: String::new(), name: "Итого".into(), ..Row::default() };
+    let mut total = Row { code: String::new(), name: ts("Итого").into(), ..Row::default() };
     for a in accounts::CHART.iter().filter(|a| a.code != "000") {
         if a.group {
-            let mut g = Row { code: a.code.into(), name: a.name.into(), ..Row::default() };
+            let mut g = Row { code: a.code.into(), name: ts(a.name).into(), ..Row::default() };
             for s in accounts::CHART.iter().filter(|s| s.code.starts_with(&format!("{}.", a.code))) {
-                g.add(&row_for(book, s.code, s.name, from, to));
+                g.add(&row_for(book, s.code, ts(s.name), from, to));
             }
             // A group shows the synthetic balance: its subaccounts net out (90 closes to zero).
             (g.open_dt, g.open_kt) = split(g.open_dt - g.open_kt);
@@ -112,7 +113,7 @@ pub fn trial_balance(book: &Book, from: Date, to: Date) -> Vec<Row> {
             }
             continue;
         }
-        let r = row_for(book, a.code, a.name, from, to);
+        let r = row_for(book, a.code, ts(a.name), from, to);
         if r.is_empty() {
             continue;
         }
@@ -143,7 +144,7 @@ pub fn account_balance(book: &Book, code: &str, from: Date, to: Date) -> Vec<Sub
         if row.is_empty() && qty == 0 {
             continue;
         }
-        let name = sub.map(|s| book.catalogs.sub_name(s)).unwrap_or_else(|| "<без аналитики>".into());
+        let name = sub.map(|s| book.catalogs.sub_name(s)).unwrap_or_else(|| ts("<без аналитики>").into());
         out.push(SubRow { sub, name, row, qty });
     }
     out

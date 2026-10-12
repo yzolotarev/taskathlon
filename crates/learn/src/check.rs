@@ -7,6 +7,7 @@ use gridcraft_engine::{
     core::{CellRef, RangeRef, Value},
     model::Workbook,
 };
+use gridcraft_tr::{t as tr, ts};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -142,21 +143,25 @@ pub fn evaluate(task: &Task, s: &Session, pressed: &[String]) -> Result<Evaluati
                 let ok = equivalent(&actual, &want)
                     || matches!((expected, &actual), (Cell::Num(n), Value::Text(t)) if t.trim().parse::<f64>().is_ok_and(|x| (x - n).abs() < 1e-9));
                 let fb = if ok {
-                    "Верно".into()
+                    ts("Верно").into()
                 } else if matches!(actual, Value::Empty) {
-                    format!("{cell} пока пустая")
+                    tr(&format!("{cell} пока пустая"))
                 } else {
-                    format!("В {cell} стоит {}, а нужно {}", show(&actual), show(&want))
+                    tr(&format!("В {cell} стоит {}, а нужно {}", show(&actual), show(&want)))
                 };
                 (ok, fb, Some(show(&want)))
             }
             Kind::Bold { range } => {
                 let ok = all_cells(range, |a| sheet_of(&wb).is_some_and(|sh| wb.styles.get(sh.style_id(a)).font.bold));
-                (ok, if ok { "Заголовки жирные".into() } else { format!("{range} ещё не жирный") }, Some("Ctrl+B".into()))
+                (ok, if ok { ts("Заголовки жирные").into() } else { tr(&format!("{range} ещё не жирный")) }, Some("Ctrl+B".into()))
             }
             Kind::Filter => {
                 let ok = sheet_of(&wb).is_some_and(|sh| sh.autofilter.is_some());
-                (ok, if ok { "Фильтр включён".into() } else { "Фильтр не включён".into() }, Some("Данные → Фильтр или Ctrl+Shift+L".into()))
+                (
+                    ok,
+                    if ok { ts("Фильтр включён").into() } else { ts("Фильтр не включён").into() },
+                    Some(ts("Данные → Фильтр или Ctrl+Shift+L").into()),
+                )
             }
             Kind::FilterShows { col, first, last, value } => {
                 let sh = sheet_of(&wb);
@@ -170,13 +175,13 @@ pub fn evaluate(task: &Task, s: &Session, pressed: &[String]) -> Result<Evaluati
                     }
                 }
                 let fb = if ok {
-                    format!("Видны только строки «{value}»")
+                    tr(&format!("Видны только строки «{value}»"))
                 } else if !has_filter {
-                    "Сначала включи фильтр".into()
+                    ts("Сначала включи фильтр").into()
                 } else {
-                    format!("Должны остаться видны только строки «{value}»")
+                    tr(&format!("Должны остаться видны только строки «{value}»"))
                 };
-                (ok, fb, Some(format!("Стрелка фильтра в заголовке → оставить «{value}»")))
+                (ok, fb, Some(tr(&format!("Стрелка фильтра в заголовке → оставить «{value}»"))))
             }
             Kind::Sorted { first, last, cols, key, descending } => {
                 let row = |r: u32| (cols.0..=cols.1).map(|c| at(&wb, r, c)).collect::<Vec<_>>();
@@ -195,25 +200,25 @@ pub fn evaluate(task: &Task, s: &Session, pressed: &[String]) -> Result<Evaluati
                 after.sort();
                 let together = before == after;
                 let fb = if ordered && together {
-                    "Отсортировано".into()
+                    ts("Отсортировано").into()
                 } else if !together {
-                    "Строки перемешались: сортируй всю таблицу целиком, а не один столбец".into()
+                    ts("Строки перемешались: сортируй всю таблицу целиком, а не один столбец").into()
                 } else {
-                    format!("Порядок {} ещё не тот", if *descending { "по убыванию" } else { "по возрастанию" })
+                    tr(&format!("Порядок {} ещё не тот", if *descending { "по убыванию" } else { "по возрастанию" }))
                 };
-                (ordered && together, fb, Some("Данные → Сортировка".into()))
+                (ordered && together, fb, Some(ts("Данные → Сортировка").into()))
             }
             Kind::Frozen { rows } => {
                 let ok = sheet_of(&wb).and_then(|sh| sh.freeze).is_some_and(|(r, _)| r == *rows);
-                (ok, if ok { "Шапка закреплена".into() } else { "Шапка не закреплена".into() }, Some("Вид → Закрепить области".into()))
+                (ok, if ok { ts("Шапка закреплена").into() } else { ts("Шапка не закреплена").into() }, Some(ts("Вид → Закрепить области").into()))
             }
             Kind::NumFmt { range, contains } => {
                 let ok =
                     all_cells(range, |a| sheet_of(&wb).is_some_and(|sh| wb.styles.get(sh.style_id(a)).num_fmt.as_str().contains(contains.as_str())));
                 (
                     ok,
-                    if ok { "Формат применён".into() } else { format!("У {range} другой формат чисел") },
-                    Some("Ctrl+1 → Числовой, разделитель групп".into()),
+                    if ok { ts("Формат применён").into() } else { tr(&format!("У {range} другой формат чисел")) },
+                    Some(ts("Ctrl+1 → Числовой, разделитель групп").into()),
                 )
             }
             Kind::Unique { col, first, last, expected } => {
@@ -234,16 +239,16 @@ pub fn evaluate(task: &Task, s: &Session, pressed: &[String]) -> Result<Evaluati
                 (
                     ok,
                     if ok {
-                        "Дубликаты удалены".into()
+                        ts("Дубликаты удалены").into()
                     } else {
-                        format!("Должно остаться {expected} уникальных строк")
+                        tr(&format!("Должно остаться {expected} уникальных строк"))
                     },
-                    Some("Данные → Удалить дубликаты".into()),
+                    Some(ts("Данные → Удалить дубликаты").into()),
                 )
             }
             Kind::Keys { combo } => {
                 let ok = pressed.iter().any(|p| p == combo);
-                (ok, if ok { format!("{combo} — есть!") } else { format!("Сделай это клавишами {combo}") }, Some(combo.clone()))
+                (ok, if ok { tr(&format!("{combo} — есть!")) } else { tr(&format!("Сделай это клавишами {combo}")) }, Some(combo.clone()))
             }
             Kind::Pairs { pairs } => pairs_check(task, &wb, pairs)?,
         };
@@ -283,19 +288,19 @@ fn formula(task: &Task, wb: &Workbook, cell: &str, reference: &str, live: bool, 
     let expected = sheet::probe(&task.setup, &[reference])?.into_iter().next().unwrap_or_default();
     let is_formula = has_formula(wb, cell);
     if !source_ok {
-        return Ok((false, "Исходные данные изменены — их трогать нельзя. Отмени правку (Ctrl+Z)".into(), solution));
+        return Ok((false, ts("Исходные данные изменены — их трогать нельзя. Отмени правку (Ctrl+Z)").into(), solution));
     }
     if matches!(actual, Value::Empty) {
-        return Ok((false, format!("{cell} пока пустая"), solution));
+        return Ok((false, tr(&format!("{cell} пока пустая")), solution));
     }
     if let Value::Error(e) = &actual {
-        return Ok((false, format!("Формула вернула {}", sheet::error_ru(e.as_str())), solution));
+        return Ok((false, tr(&format!("Формула вернула {}", sheet::error_ru(e.as_str()))), solution));
     }
     if !equivalent(&actual, &expected) {
-        return Ok((false, format!("В {cell} получилось {}, а должно быть {}", show(&actual), show(&expected)), solution));
+        return Ok((false, tr(&format!("В {cell} получилось {}, а должно быть {}", show(&actual), show(&expected))), solution));
     }
     if live && !is_formula {
-        return Ok((false, "Число верное, но вписано вручную. Нужна формула — она пересчитается на новых данных".into(), solution));
+        return Ok((false, ts("Число верное, но вписано вручную. Нужна формула — она пересчитается на новых данных").into(), solution));
     }
     if live {
         // Same layout, different numbers: a real formula follows, a typed result does not.
@@ -307,11 +312,11 @@ fn formula(task: &Task, wb: &Workbook, cell: &str, reference: &str, live: bool, 
             let got = sheet::value(&probe, cell)?;
             let want = sheet::probe(&other.setup, &[reference])?.into_iter().next().unwrap_or_default();
             if !equivalent(&got, &want) {
-                return Ok((false, "На других данных формула ошибается. Проверь диапазоны и закрепление $".into(), solution));
+                return Ok((false, ts("На других данных формула ошибается. Проверь диапазоны и закрепление $").into(), solution));
             }
         }
     }
-    Ok((true, "Верно!".into(), solution))
+    Ok((true, ts("Верно!").into(), solution))
 }
 
 fn pairs_check(task: &Task, wb: &Workbook, pairs: &[(String, String)]) -> Result<(bool, String, Option<String>)> {
@@ -320,7 +325,7 @@ fn pairs_check(task: &Task, wb: &Workbook, pairs: &[(String, String)]) -> Result
     // Labels in the source data or in the case's answer cells don't count as a summary.
     let inputs: Vec<CellRef> =
         task.setup.cells.iter().filter(|(_, _, i)| *i).map(|(c, ..)| c).chain(task.setup.answers.iter()).filter_map(|c| CellRef::parse(c)).collect();
-    let Some(sh) = sheet_of(wb) else { return Ok((false, "Нет листа".into(), None)) };
+    let Some(sh) = sheet_of(wb) else { return Ok((false, ts("Нет листа").into(), None)) };
     let mut missing = Vec::new();
     for ((label, _), want) in pairs.iter().zip(expected.iter()) {
         let mut found = false;
@@ -340,8 +345,8 @@ fn pairs_check(task: &Task, wb: &Workbook, pairs: &[(String, String)]) -> Result
     }
     let solution = Some(pairs.iter().zip(expected.iter()).map(|((l, _), v)| format!("{l} — {}", show(v))).collect::<Vec<_>>().join("; "));
     if missing.is_empty() {
-        Ok((true, "Сводка сходится".into(), solution))
+        Ok((true, ts("Сводка сходится").into(), solution))
     } else {
-        Ok((false, format!("Не нашёл в сводке: {}", missing.join("; ")), solution))
+        Ok((false, tr(&format!("Не нашёл в сводке: {}", missing.join("; "))), solution))
     }
 }

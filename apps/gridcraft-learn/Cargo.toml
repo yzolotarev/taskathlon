@@ -14,6 +14,7 @@ workspace = true
 [dependencies]
 gridcraft-learn-core = { path = "../../crates/learn" }
 gridcraft-ledger = { path = "../../crates/ledger" }
+gridcraft-tr = { path = "../../crates/tr" }
 gridcraft-engine.workspace = true
 gridcraft-ui-egui.workspace = true
 serde_json.workspace = true

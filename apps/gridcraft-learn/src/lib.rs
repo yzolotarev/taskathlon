@@ -3,6 +3,7 @@
 #![cfg(not(target_arch = "wasm32"))]
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::todo, clippy::unimplemented, clippy::unreachable)]
 
+use gridcraft_tr::{t as tr, ts};
 mod ai;
 pub mod ledger_ui;
 pub mod remind;
@@ -203,14 +204,15 @@ impl LearningApp {
         let mut notice = None;
         let save = match path.as_ref() {
             Some(p) if p.exists() => {
-                let bytes = std::fs::read(p).map_err(|e| LearnError::Invalid(format!("Не удалось прочитать {}: {e}", p.display())))?;
+                let bytes = std::fs::read(p).map_err(|e| LearnError::Invalid(tr(&format!("Не удалось прочитать {}: {e}", p.display()))))?;
                 match Save::decode(&bytes) {
                     Ok(s) => Some(s),
                     Err(_) => {
                         // An older or damaged file is kept aside, never overwritten.
                         let backup = p.with_extension("old.json");
-                        std::fs::rename(p, &backup).map_err(|e| LearnError::Invalid(format!("Не удалось сохранить копию старого прогресса: {e}")))?;
-                        notice = Some(format!("Старый файл прогресса сохранён как {}. Начинаем новую версию тренажёра.", backup.display()));
+                        std::fs::rename(p, &backup)
+                            .map_err(|e| LearnError::Invalid(tr(&format!("Не удалось сохранить копию старого прогресса: {e}"))))?;
+                        notice = Some(tr(&format!("Старый файл прогресса сохранён как {}. Начинаем новую версию тренажёра.", backup.display())));
                         None
                     }
                 }
@@ -220,7 +222,8 @@ impl LearningApp {
         let (profile, current) = save.map(|s| (s.profile, s.current)).unwrap_or_default();
         let mut sheet = SheetApp::new(gridcraft_engine::Session::new(), Services::default());
         sheet.ui.dark = profile.dark;
-        sheet.ui.language = gridcraft_ui_egui::i18n::Language::Ru;
+        gridcraft_tr::set_english(profile.english);
+        sheet.ui.language = if profile.english { gridcraft_ui_egui::i18n::Language::En } else { gridcraft_ui_egui::i18n::Language::Ru };
         sheet.ui.ribbon_collapsed = true;
         sheet.ui.animations = false;
         let mut app = Self {
@@ -371,7 +374,7 @@ impl LearningApp {
     pub fn start_testout(&mut self, unit: usize) -> Result<(), LearnError> {
         let lesson = self.profile.plan_testout(unit);
         if lesson.total == 0 {
-            self.notice = Some("Здесь всё уже на уровне «Сам» или выше.".into());
+            self.notice = Some(ts("Здесь всё уже на уровне «Сам» или выше.").into());
             return Ok(());
         }
         self.streak_extended = false;
@@ -401,7 +404,7 @@ impl LearningApp {
                     self.load(task, Some(lesson), None, Some(slot))?;
                     return self.save();
                 }
-                Err(e) => self.notice = Some(format!("Упражнение пропущено: {e}")),
+                Err(e) => self.notice = Some(tr(&format!("Упражнение пропущено: {e}"))),
             }
         }
         self.finish_lesson(lesson);
@@ -419,7 +422,7 @@ impl LearningApp {
             if record && previous.is_some() {
                 self.toasts.push(Toast {
                     icon: "🏁".into(),
-                    text: format!("Новый рекорд! −{:.1} с", previous.unwrap_or(seconds) - seconds),
+                    text: tr(&format!("Новый рекорд! −{:.1} с", previous.unwrap_or(seconds) - seconds)),
                     born: self.time(),
                 });
             }
@@ -552,7 +555,7 @@ impl LearningApp {
                         l.level_ups.push(format!(
                             "{mark}{} → {}",
                             task.skill_name(),
-                            content::LEVELS.get(usize::from(level) - 1).copied().unwrap_or("")
+                            ts(content::LEVELS.get(usize::from(level) - 1).copied().unwrap_or(""))
                         ));
                     }
                 }
@@ -561,13 +564,14 @@ impl LearningApp {
                 let t = self.time();
                 let new_combo = combo + 1;
                 if change.fast_track {
-                    self.pop = Some(Pop { text: "⏩ УЖЕ ЗНАЕШЬ!".into(), color: egui::Color32::from_rgb(59, 130, 246), born: t });
+                    self.pop = Some(Pop { text: ts("⏩ УЖЕ ЗНАЕШЬ!").into(), color: egui::Color32::from_rgb(59, 130, 246), born: t });
                 } else if matches!(new_combo, 3 | 5 | 10 | 15 | 20) {
-                    self.pop = Some(Pop { text: format!("🔥 КОМБО ×{new_combo}"), color: egui::Color32::from_rgb(249, 115, 22), born: t });
+                    self.pop =
+                        Some(Pop { text: tr(&format!("🔥 КОМБО ×{new_combo}")), color: egui::Color32::from_rgb(249, 115, 22), born: t });
                 } else if change.speed == Speed::Lightning {
-                    self.pop = Some(Pop { text: "⚡ МОЛНИЯ!".into(), color: egui::Color32::from_rgb(245, 180, 0), born: t });
+                    self.pop = Some(Pop { text: ts("⚡ МОЛНИЯ!").into(), color: egui::Color32::from_rgb(245, 180, 0), born: t });
                 } else if change.speed == Speed::Fast {
-                    self.pop = Some(Pop { text: "💨 БЫСТРО!".into(), color: egui::Color32::from_rgb(16, 185, 129), born: t });
+                    self.pop = Some(Pop { text: ts("💨 БЫСТРО!").into(), color: egui::Color32::from_rgb(16, 185, 129), born: t });
                 }
                 if change.level_up.is_some() || matches!(new_combo, 5 | 10 | 15 | 20) {
                     self.pending_confetti = true;
@@ -605,26 +609,27 @@ impl LearningApp {
         let t = self.time();
         for id in &change.achievements {
             if let Some((icon, name, _)) = achievement(id) {
-                self.toasts.push(Toast { icon: icon.into(), text: format!("Достижение: {name}  +20 💎"), born: t });
+                self.toasts.push(Toast { icon: icon.into(), text: tr(&format!("Достижение: {}  +20 💎", ts(name))), born: t });
                 self.pending_confetti = true;
             }
         }
         for q in &change.quests_done {
-            self.toasts.push(Toast { icon: "✅".into(), text: format!("Задание дня: {q}"), born: t });
+            self.toasts.push(Toast { icon: "✅".into(), text: tr(&format!("Задание дня: {q}")), born: t });
         }
         if change.goal_reached {
-            self.toasts.push(Toast { icon: "🎯".into(), text: "Цель дня выполнена!  +10 💎".into(), born: t });
+            self.toasts.push(Toast { icon: "🎯".into(), text: ts("Цель дня выполнена!  +10 💎").into(), born: t });
         }
         if change.freeze_used {
             self.toasts.push(Toast {
-                icon: "🧊".into(), text: "Заморозка спасла серию за пропущенный день".into(), born: t
+                icon: "🧊".into(), text: ts("Заморозка спасла серию за пропущенный день").into(), born: t
             });
         }
         if let Some(w) = change.wager_won {
-            self.toasts.push(Toast { icon: "🎲".into(), text: format!("Ставка выиграна!  +{w} 💎"), born: t });
+            self.toasts.push(Toast { icon: "🎲".into(), text: tr(&format!("Ставка выиграна!  +{w} 💎")), born: t });
         }
         if change.wager_lost {
-            self.toasts.push(Toast { icon: "💔".into(), text: "Серия прервалась — ставка сгорела".into(), born: t });
+            self.toasts
+                .push(Toast { icon: "💔".into(), text: ts("Серия прервалась — ставка сгорела").into(), born: t });
         }
         if !change.achievements.is_empty() {
             self.cue(Cue::Achievement);
@@ -673,9 +678,9 @@ impl LearningApp {
         b.answers.push((choice, used, pts));
         if right {
             if matches!(combo, 3 | 5 | 10) {
-                self.pop = Some(Pop { text: format!("🔥 КОМБО ×{combo}"), color: egui::Color32::from_rgb(249, 115, 22), born: t });
+                self.pop = Some(Pop { text: tr(&format!("🔥 КОМБО ×{combo}")), color: egui::Color32::from_rgb(249, 115, 22), born: t });
             } else if fast {
-                self.pop = Some(Pop { text: "⚡ МОЛНИЯ!".into(), color: egui::Color32::from_rgb(245, 180, 0), born: t });
+                self.pop = Some(Pop { text: ts("⚡ МОЛНИЯ!").into(), color: egui::Color32::from_rgb(245, 180, 0), born: t });
             }
         }
         self.cue(if !right {
@@ -774,7 +779,7 @@ impl LearningApp {
             && let Some(lesson) = a.lesson
             && lesson.done > 0
         {
-            self.notice = Some(format!("Урок прерван: пройдено {} из {}.", lesson.done, lesson.total));
+            self.notice = Some(tr(&format!("Урок прерван: пройдено {} из {}.", lesson.done, lesson.total)));
         }
         self.feedback = None;
         self.sprint_clock = None;
@@ -846,7 +851,7 @@ impl LearningApp {
         if self.last_save.elapsed() > Duration::from_secs(3)
             && let Err(e) = self.save()
         {
-            self.notice = Some(format!("Ошибка сохранения: {e}"));
+            self.notice = Some(tr(&format!("Ошибка сохранения: {e}")));
         }
         ctx.request_repaint_after(Duration::from_millis(500));
     }
@@ -1005,9 +1010,9 @@ impl LearningApp {
                     let change = self.profile.record_ledger_task(secs, goal, now());
                     let t = self.time();
                     let text = match change.speed {
-                        Speed::Lightning => "⚡ МОЛНИЯ!",
-                        Speed::Fast => "💨 БЫСТРО!",
-                        Speed::Normal => "✔ ВЕРНО!",
+                        Speed::Lightning => ts("⚡ МОЛНИЯ!"),
+                        Speed::Fast => ts("💨 БЫСТРО!"),
+                        Speed::Normal => ts("✔ ВЕРНО!"),
                     };
                     self.pop = Some(Pop { text: text.into(), color: egui::Color32::from_rgb(16, 185, 129), born: t });
                     self.cue(if change.speed == Speed::Lightning { Cue::Lightning } else { Cue::Correct });

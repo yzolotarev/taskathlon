@@ -1674,6 +1674,7 @@ dependencies = [
  "gridcraft-engine",
  "gridcraft-learn-core",
  "gridcraft-ledger",
+ "gridcraft-tr",
  "gridcraft-ui-egui",
  "serde_json",
  "ureq",
@@ -1684,6 +1685,7 @@ name = "gridcraft-learn-core"
 version = "0.5.0"
 dependencies = [
  "gridcraft-engine",
+ "gridcraft-tr",
  "rusqlite",
  "serde",
  "serde_json",
@@ -1694,6 +1696,7 @@ dependencies = [
 name = "gridcraft-ledger"
 version = "0.5.0"
 dependencies = [
+ "gridcraft-tr",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
@@ -1729,6 +1732,10 @@ dependencies = [
 
 [[package]]
 name = "gridcraft-pdf"
+version = "0.5.0"
+
+[[package]]
+name = "gridcraft-tr"
 version = "0.5.0"
 
 [[package]]

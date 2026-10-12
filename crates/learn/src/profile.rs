@@ -4,6 +4,7 @@
 use crate::content::{CASES, SKILLS};
 use crate::fsrs::{Card, Grade};
 use crate::{Evaluation, Mode, Spec, Task};
+use gridcraft_tr::{t as tr, ts};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, VecDeque};
 
@@ -80,6 +81,9 @@ pub struct Profile {
     pub next_seed: u64,
     pub sound: bool,
     pub dark: bool,
+    /// English interface instead of Russian.
+    #[serde(default)]
+    pub english: bool,
     /// Currency for streak freezes and wagers.
     pub gems: u32,
     pub freezes: u8,
@@ -135,10 +139,10 @@ impl Medal {
     }
     pub fn label(self) -> &'static str {
         match self {
-            Self::Gold => "🥇 Золото",
-            Self::Silver => "🥈 Серебро",
-            Self::Bronze => "🥉 Бронза",
-            Self::None => "Без медали",
+            Self::Gold => ts("🥇 Золото"),
+            Self::Silver => ts("🥈 Серебро"),
+            Self::Bronze => ts("🥉 Бронза"),
+            Self::None => ts("Без медали"),
         }
     }
 }
@@ -175,14 +179,14 @@ impl Quest {
     pub fn title(&self) -> String {
         let t = self.target;
         match self.kind {
-            QuestKind::Xp => format!("Набери {t} XP"),
-            QuestKind::Lightning => format!("Ответь молниеносно {t} раз"),
-            QuestKind::Perfect => "Пройди урок без единой ошибки".into(),
-            QuestKind::Combo => format!("Собери комбо ×{t}"),
-            QuestKind::Lessons => format!("Пройди уроков: {t}"),
-            QuestKind::Sql => format!("Реши SQL-задач: {t}"),
-            QuestKind::Blitz => "Пройди экспресс-тест".into(),
-            QuestKind::Review => format!("Повтори навыков: {t}"),
+            QuestKind::Xp => tr(&format!("Набери {t} XP")),
+            QuestKind::Lightning => tr(&format!("Ответь молниеносно {t} раз")),
+            QuestKind::Perfect => ts("Пройди урок без единой ошибки").into(),
+            QuestKind::Combo => tr(&format!("Собери комбо ×{t}")),
+            QuestKind::Lessons => tr(&format!("Пройди уроков: {t}")),
+            QuestKind::Sql => tr(&format!("Реши SQL-задач: {t}")),
+            QuestKind::Blitz => ts("Пройди экспресс-тест").into(),
+            QuestKind::Review => tr(&format!("Повтори навыков: {t}")),
         }
     }
 }
@@ -238,6 +242,7 @@ impl Default for Profile {
             next_seed: 1,
             sound: true,
             dark: false,
+            english: false,
             gems: 50,
             freezes: 0,
             frozen_days: Vec::new(),
@@ -574,10 +579,10 @@ impl Profile {
     /// Bets `stake` gems on keeping the streak for `days` more days; a win pays double.
     pub fn place_wager(&mut self, stake: u32, days: u32, now: u64) -> Result<(), String> {
         if self.wager.is_some() {
-            return Err("Ставка уже сделана".into());
+            return Err(ts("Ставка уже сделана").into());
         }
         if self.gems < stake {
-            return Err(format!("Нужно {stake} 💎"));
+            return Err(tr(&format!("Нужно {stake} 💎")));
         }
         self.gems -= stake;
         self.wager = Some(Wager { start_day: self.day(now), days, stake });
@@ -588,10 +593,10 @@ impl Profile {
 
     pub fn buy_freeze(&mut self) -> Result<(), String> {
         if self.freezes >= 2 {
-            return Err("Больше двух заморозок не хранится".into());
+            return Err(ts("Больше двух заморозок не хранится").into());
         }
         if self.gems < Self::FREEZE_PRICE {
-            return Err(format!("Нужно {} 💎", Self::FREEZE_PRICE));
+            return Err(tr(&format!("Нужно {} 💎", Self::FREEZE_PRICE)));
         }
         self.gems -= Self::FREEZE_PRICE;
         self.freezes += 1;

@@ -3,6 +3,7 @@
 
 use crate::catalog::{Sub, Vat};
 use crate::money::{Date, Money};
+use gridcraft_tr::{t as tr, ts};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -167,19 +168,19 @@ impl DocKind {
 
     pub fn title(self) -> &'static str {
         match self {
-            DocKind::Opening => "Ввод начальных остатков",
-            DocKind::Receipt => "Поступление товаров и материалов",
-            DocKind::Services => "Поступление услуг",
-            DocKind::Sale => "Реализация товаров",
-            DocKind::AssetPurchase => "Покупка основного средства",
-            DocKind::WriteOff => "Списание материалов",
-            DocKind::BankIn => "Поступление на расчётный счёт",
-            DocKind::BankOut => "Списание с расчётного счёта",
-            DocKind::CashIn => "Приходный кассовый ордер",
-            DocKind::CashOut => "Расходный кассовый ордер",
-            DocKind::AdvanceReport => "Авансовый отчёт",
-            DocKind::Payroll => "Начисление зарплаты",
-            DocKind::MonthClose => "Закрытие месяца",
+            DocKind::Opening => ts("Ввод начальных остатков"),
+            DocKind::Receipt => ts("Поступление товаров и материалов"),
+            DocKind::Services => ts("Поступление услуг"),
+            DocKind::Sale => ts("Реализация товаров"),
+            DocKind::AssetPurchase => ts("Покупка основного средства"),
+            DocKind::WriteOff => ts("Списание материалов"),
+            DocKind::BankIn => ts("Поступление на расчётный счёт"),
+            DocKind::BankOut => ts("Списание с расчётного счёта"),
+            DocKind::CashIn => ts("Приходный кассовый ордер"),
+            DocKind::CashOut => ts("Расходный кассовый ордер"),
+            DocKind::AdvanceReport => ts("Авансовый отчёт"),
+            DocKind::Payroll => ts("Начисление зарплаты"),
+            DocKind::MonthClose => ts("Закрытие месяца"),
         }
     }
 
@@ -260,6 +261,6 @@ pub struct Document {
 
 impl Document {
     pub fn label(&self) -> String {
-        format!("{} {} от {}", self.body.kind().title(), self.number, self.date)
+        tr(&format!("{} {} от {}", self.body.kind().title(), self.number, self.date))
     }
 }

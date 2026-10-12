@@ -1,6 +1,7 @@
 //! Catalogs: counterparties, items, employees and fixed assets.
 
 use crate::money::Money;
+use gridcraft_tr::ts;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -29,7 +30,7 @@ impl Vat {
 
     pub fn label(self) -> &'static str {
         match self {
-            Vat::None => "Без НДС",
+            Vat::None => ts("Без НДС"),
             Vat::Zero => "0%",
             Vat::R10 => "10%",
             Vat::R22 => "22%",
@@ -111,7 +112,7 @@ impl Catalogs {
             Sub::Employee(id) => self.employee(id).map(|c| c.name.clone()),
             Sub::Asset(id) => self.asset(id).map(|c| c.name.clone()),
         }
-        .unwrap_or_else(|| "<удалён>".into())
+        .unwrap_or_else(|| ts("<удалён>").into())
     }
 
     fn next(ids: impl Iterator<Item = u32>) -> u32 {

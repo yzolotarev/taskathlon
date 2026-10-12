@@ -7,6 +7,7 @@ use gridcraft_engine::{
     formula::{FormulaLocale, parse, print_input},
     model::Workbook,
 };
+use gridcraft_tr::{t as tr, ts};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -110,12 +111,12 @@ pub fn set(s: &mut Session, cell: &str, value: &Cell) -> Result<()> {
 }
 
 pub fn address(s: &str) -> Result<CellRef> {
-    CellRef::parse(s).ok_or_else(|| LearnError::Invalid(format!("Неверная ячейка {s}")))
+    CellRef::parse(s).ok_or_else(|| LearnError::Invalid(tr(&format!("Неверная ячейка {s}"))))
 }
 
 pub fn value(s: &Session, cell: &str) -> Result<Value> {
     let d = s.doc()?;
-    let sh = d.wb.sheet(d.wb.active_sheet).ok_or_else(|| LearnError::Invalid("Нет листа".into()))?;
+    let sh = d.wb.sheet(d.wb.active_sheet).ok_or_else(|| LearnError::Invalid(ts("Нет листа").into()))?;
     Ok(sh.value(address(cell)?))
 }
 
@@ -242,24 +243,24 @@ pub fn num_text(n: f64) -> String {
 
 pub fn show(v: &Value) -> String {
     match v {
-        Value::Empty => "пусто".into(),
+        Value::Empty => ts("пусто").into(),
         Value::Number(n) => num_text(*n),
         Value::Text(t) => format!("«{t}»"),
-        Value::Bool(b) => if *b { "ИСТИНА" } else { "ЛОЖЬ" }.into(),
+        Value::Bool(b) => if *b { ts("ИСТИНА") } else { ts("ЛОЖЬ") }.into(),
         Value::Error(e) => error_ru(e.as_str()).into(),
-        Value::Array(_) => "массив".into(),
+        Value::Array(_) => ts("массив").into(),
     }
 }
 
 pub fn error_ru(e: &str) -> &'static str {
     match e {
-        "#N/A" => "#Н/Д (значение не найдено)",
-        "#DIV/0!" => "#ДЕЛ/0! (деление на ноль)",
-        "#VALUE!" => "#ЗНАЧ! (не тот тип данных)",
-        "#REF!" => "#ССЫЛКА! (ссылка на удалённую ячейку)",
-        "#NAME?" => "#ИМЯ? (функция с таким именем не найдена — проверь написание)",
-        "#NUM!" => "#ЧИСЛО!",
-        "#SPILL!" => "#ПЕРЕНОС!",
-        _ => "ошибка",
+        "#N/A" => ts("#Н/Д (значение не найдено)"),
+        "#DIV/0!" => ts("#ДЕЛ/0! (деление на ноль)"),
+        "#VALUE!" => ts("#ЗНАЧ! (не тот тип данных)"),
+        "#REF!" => ts("#ССЫЛКА! (ссылка на удалённую ячейку)"),
+        "#NAME?" => ts("#ИМЯ? (функция с таким именем не найдена — проверь написание)"),
+        "#NUM!" => ts("#ЧИСЛО!"),
+        "#SPILL!" => ts("#ПЕРЕНОС!"),
+        _ => ts("ошибка"),
     }
 }

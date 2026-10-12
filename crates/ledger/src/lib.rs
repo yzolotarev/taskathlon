@@ -7,6 +7,7 @@
 #![forbid(unsafe_code)]
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::todo, clippy::unimplemented, clippy::unreachable)]
 
+use gridcraft_tr::{t as tr, ts};
 pub mod accounts;
 pub mod catalog;
 pub mod demo;
@@ -104,8 +105,8 @@ pub struct Book {
 fn key(acc: &str) -> Result<&'static str, String> {
     match accounts::account(acc) {
         Some(a) if !a.group => Ok(a.code),
-        Some(a) => Err(format!("Счёт {} — группа, выберите субсчёт", a.code)),
-        None => Err(format!("Нет счёта {acc} в плане счетов")),
+        Some(a) => Err(tr(&format!("Счёт {} — группа, выберите субсчёт", a.code))),
+        None => Err(tr(&format!("Нет счёта {acc} в плане счетов"))),
     }
 }
 
@@ -135,7 +136,7 @@ impl Poster<'_> {
                     | (Analytic::Asset, Some(Sub::Asset(_)))
             );
             if !ok {
-                return Err(format!("Счёт {code}: неверная аналитика"));
+                return Err(tr(&format!("Счёт {code}: неверная аналитика")));
             }
         }
         self.out.push(Entry { doc: self.doc.id, date: self.doc.date, dt, dt_sub, kt, kt_sub, amount, qty, memo: memo.into() });
@@ -143,15 +144,15 @@ impl Poster<'_> {
     }
 
     fn cp(&self, id: u32) -> Result<Option<Sub>, String> {
-        self.book.catalogs.counterparty(id).map(|_| Some(Sub::Counterparty(id))).ok_or_else(|| "Не выбран контрагент".to_string())
+        self.book.catalogs.counterparty(id).map(|_| Some(Sub::Counterparty(id))).ok_or_else(|| ts("Не выбран контрагент").to_string())
     }
 
     fn emp(&self, id: u32) -> Result<Option<Sub>, String> {
-        self.book.catalogs.employee(id).map(|_| Some(Sub::Employee(id))).ok_or_else(|| "Не выбран сотрудник".to_string())
+        self.book.catalogs.employee(id).map(|_| Some(Sub::Employee(id))).ok_or_else(|| ts("Не выбран сотрудник").to_string())
     }
 
     fn item_vat(&self, id: u32) -> Result<Vat, String> {
-        self.book.catalogs.item(id).map(|i| i.vat).ok_or_else(|| "Не выбрана номенклатура".to_string())
+        self.book.catalogs.item(id).map(|i| i.vat).ok_or_else(|| ts("Не выбрана номенклатура").to_string())
     }
 
     /// Average cost of `qty` units of `item` on `acc`; notes a problem when stock is short.
@@ -159,7 +160,7 @@ impl Poster<'_> {
         let (amount, have) = bal.get(acc, Some(Sub::Item(item)));
         let name = self.book.catalogs.item(item).map(|i| i.name.clone()).unwrap_or_default();
         if qty > have {
-            self.problems.push(format!("Не хватает «{name}» на счёте {acc}: нужно {qty}, есть {have}"));
+            self.problems.push(tr(&format!("Не хватает «{name}» на счёте {acc}: нужно {qty}, есть {have}")));
         }
         if have <= 0 {
             return Money::ZERO;
@@ -172,19 +173,19 @@ impl Poster<'_> {
         match &d.body {
             Body::Opening { lines } => {
                 for l in lines {
-                    self.e(&l.account, l.sub, "000", None, l.debit, l.qty, "Ввод остатков")?;
-                    self.e("000", None, &l.account, l.sub, l.credit, if l.debit.is_zero() { l.qty } else { 0 }, "Ввод остатков")?;
+                    self.e(&l.account, l.sub, "000", None, l.debit, l.qty, ts("Ввод остатков"))?;
+                    self.e("000", None, &l.account, l.sub, l.credit, if l.debit.is_zero() { l.qty } else { 0 }, ts("Ввод остатков"))?;
                 }
             }
             Body::Receipt { supplier, account, lines } => {
                 if account != "41" && account != "10" {
-                    return Err("Товары приходуются на 41, материалы на 10".into());
+                    return Err(ts("Товары приходуются на 41, материалы на 10").into());
                 }
                 let s = self.cp(*supplier)?;
                 for l in lines {
                     let vat = self.item_vat(l.item)?.inside(l.amount);
-                    self.e(account, Some(Sub::Item(l.item)), "60", s, l.amount - vat, l.qty, "Поступление")?;
-                    self.e("19", s, "60", s, vat, 0, "НДС предъявлен поставщиком")?;
+                    self.e(account, Some(Sub::Item(l.item)), "60", s, l.amount - vat, l.qty, ts("Поступление"))?;
+                    self.e("19", s, "60", s, vat, 0, ts("НДС предъявлен поставщиком"))?;
                 }
             }
             Body::Services { supplier, lines } => {
@@ -192,7 +193,7 @@ impl Poster<'_> {
                 for l in lines {
                     let vat = l.vat.inside(l.amount);
                     self.e(&l.account, None, "60", s, l.amount - vat, 0, &l.text)?;
-                    self.e("19", s, "60", s, vat, 0, "НДС предъявлен поставщиком")?;
+                    self.e("19", s, "60", s, vat, 0, ts("НДС предъявлен поставщиком"))?;
                 }
             }
             Body::Sale { customer, lines } => {
@@ -200,61 +201,61 @@ impl Poster<'_> {
                 for l in lines {
                     let vat = self.item_vat(l.item)?.inside(l.amount);
                     let cost = self.cost(bal, "41", l.item, l.qty);
-                    self.e("62", c, "90.01", None, l.amount, 0, "Выручка")?;
-                    self.e("90.03", None, "68.02", None, vat, 0, "НДС с выручки")?;
-                    self.e("90.02", None, "41", Some(Sub::Item(l.item)), cost, l.qty, "Себестоимость")?;
+                    self.e("62", c, "90.01", None, l.amount, 0, ts("Выручка"))?;
+                    self.e("90.03", None, "68.02", None, vat, 0, ts("НДС с выручки"))?;
+                    self.e("90.02", None, "41", Some(Sub::Item(l.item)), cost, l.qty, ts("Себестоимость"))?;
                 }
             }
             Body::AssetPurchase { supplier, asset, amount, vat } => {
                 let s = self.cp(*supplier)?;
-                let a = self.book.catalogs.asset(*asset).map(|_| Some(Sub::Asset(*asset))).ok_or("Не выбрано основное средство")?;
+                let a = self.book.catalogs.asset(*asset).map(|_| Some(Sub::Asset(*asset))).ok_or(ts("Не выбрано основное средство"))?;
                 let v = vat.inside(*amount);
-                self.e("08", a, "60", s, *amount - v, 0, "Покупка ОС")?;
-                self.e("19", s, "60", s, v, 0, "НДС предъявлен поставщиком")?;
-                self.e("01", a, "08", a, *amount - v, 0, "Ввод в эксплуатацию")?;
+                self.e("08", a, "60", s, *amount - v, 0, ts("Покупка ОС"))?;
+                self.e("19", s, "60", s, v, 0, ts("НДС предъявлен поставщиком"))?;
+                self.e("01", a, "08", a, *amount - v, 0, ts("Ввод в эксплуатацию"))?;
             }
             Body::WriteOff { account, lines } => {
                 for l in lines {
                     let cost = self.cost(bal, "10", l.item, l.qty);
-                    self.e(account, None, "10", Some(Sub::Item(l.item)), cost, l.qty, "Списание материалов")?;
+                    self.e(account, None, "10", Some(Sub::Item(l.item)), cost, l.qty, ts("Списание материалов"))?;
                 }
             }
             Body::BankIn { from, amount } => match from {
-                document::BankIn::Customer(c) => self.e("51", None, "62", self.cp(*c)?, *amount, 0, "Оплата от покупателя")?,
-                document::BankIn::Loan(c) => self.e("51", None, "66", self.cp(*c)?, *amount, 0, "Получен заём")?,
-                document::BankIn::FromCash => self.e("51", None, "50", None, *amount, 0, "Взнос наличных")?,
+                document::BankIn::Customer(c) => self.e("51", None, "62", self.cp(*c)?, *amount, 0, ts("Оплата от покупателя"))?,
+                document::BankIn::Loan(c) => self.e("51", None, "66", self.cp(*c)?, *amount, 0, ts("Получен заём"))?,
+                document::BankIn::FromCash => self.e("51", None, "50", None, *amount, 0, ts("Взнос наличных"))?,
             },
             Body::BankOut { to, amount } => {
                 if bal.total("51") < *amount {
-                    self.problems.push(format!("На расчётном счёте не хватает денег: остаток {}", bal.total("51")));
+                    self.problems.push(tr(&format!("На расчётном счёте не хватает денег: остаток {}", bal.total("51"))));
                 }
                 match to {
-                    document::BankOut::Supplier(c) => self.e("60", self.cp(*c)?, "51", None, *amount, 0, "Оплата поставщику")?,
+                    document::BankOut::Supplier(c) => self.e("60", self.cp(*c)?, "51", None, *amount, 0, ts("Оплата поставщику"))?,
                     document::BankOut::Tax(acc) => {
                         if !acc.starts_with("68.") {
-                            return Err("Налог платится со счёта 68.xx".into());
+                            return Err(ts("Налог платится со счёта 68.xx").into());
                         }
-                        self.e(acc, None, "51", None, *amount, 0, "Уплата налога")?
+                        self.e(acc, None, "51", None, *amount, 0, ts("Уплата налога"))?
                     }
-                    document::BankOut::Insurance => self.e("69", None, "51", None, *amount, 0, "Уплата взносов")?,
-                    document::BankOut::Salary(e) => self.e("70", self.emp(*e)?, "51", None, *amount, 0, "Выплата зарплаты")?,
-                    document::BankOut::Fee => self.e("91.02", None, "51", None, *amount, 0, "Комиссия банка")?,
-                    document::BankOut::LoanRepay(c) => self.e("66", self.cp(*c)?, "51", None, *amount, 0, "Возврат займа")?,
-                    document::BankOut::ToCash => self.e("50", None, "51", None, *amount, 0, "Снятие наличных в кассу")?,
+                    document::BankOut::Insurance => self.e("69", None, "51", None, *amount, 0, ts("Уплата взносов"))?,
+                    document::BankOut::Salary(e) => self.e("70", self.emp(*e)?, "51", None, *amount, 0, ts("Выплата зарплаты"))?,
+                    document::BankOut::Fee => self.e("91.02", None, "51", None, *amount, 0, ts("Комиссия банка"))?,
+                    document::BankOut::LoanRepay(c) => self.e("66", self.cp(*c)?, "51", None, *amount, 0, ts("Возврат займа"))?,
+                    document::BankOut::ToCash => self.e("50", None, "51", None, *amount, 0, ts("Снятие наличных в кассу"))?,
                 }
             }
             Body::CashIn { from, amount } => match from {
-                document::CashIn::Customer(c) => self.e("50", None, "62", self.cp(*c)?, *amount, 0, "Оплата наличными")?,
-                document::CashIn::AdvanceReturn(e) => self.e("50", None, "71", self.emp(*e)?, *amount, 0, "Возврат подотчётных")?,
+                document::CashIn::Customer(c) => self.e("50", None, "62", self.cp(*c)?, *amount, 0, ts("Оплата наличными"))?,
+                document::CashIn::AdvanceReturn(e) => self.e("50", None, "71", self.emp(*e)?, *amount, 0, ts("Возврат подотчётных"))?,
             },
             Body::CashOut { to, amount } => {
                 if bal.total("50") < *amount {
-                    self.problems.push(format!("В кассе не хватает денег: остаток {}", bal.total("50")));
+                    self.problems.push(tr(&format!("В кассе не хватает денег: остаток {}", bal.total("50"))));
                 }
                 match to {
-                    document::CashOut::Advance(e) => self.e("71", self.emp(*e)?, "50", None, *amount, 0, "Выдано под отчёт")?,
-                    document::CashOut::Salary(e) => self.e("70", self.emp(*e)?, "50", None, *amount, 0, "Выплата зарплаты")?,
-                    document::CashOut::Supplier(c) => self.e("60", self.cp(*c)?, "50", None, *amount, 0, "Оплата поставщику")?,
+                    document::CashOut::Advance(e) => self.e("71", self.emp(*e)?, "50", None, *amount, 0, ts("Выдано под отчёт"))?,
+                    document::CashOut::Salary(e) => self.e("70", self.emp(*e)?, "50", None, *amount, 0, ts("Выплата зарплаты"))?,
+                    document::CashOut::Supplier(c) => self.e("60", self.cp(*c)?, "50", None, *amount, 0, ts("Оплата поставщику"))?,
                 }
             }
             Body::AdvanceReport { employee, lines } => {
@@ -262,15 +263,15 @@ impl Poster<'_> {
                 for l in lines {
                     let vat = l.vat.inside(l.amount);
                     self.e(&l.account, None, "71", e, l.amount - vat, 0, &l.text)?;
-                    self.e("19", None, "71", e, vat, 0, "НДС по авансовому отчёту")?;
+                    self.e("19", None, "71", e, vat, 0, ts("НДС по авансовому отчёту"))?;
                 }
             }
             Body::Payroll { account, lines } => {
                 for (id, gross) in lines {
                     let e = self.emp(*id)?;
-                    self.e(account, None, "70", e, *gross, 0, "Начислена зарплата")?;
-                    self.e("70", e, "68.01", None, gross.mul_div(NDFL_PERCENT, 100), 0, "Удержан НДФЛ")?;
-                    self.e(account, None, "69", None, gross.mul_div(CONTRIBUTIONS_PERCENT, 100), 0, "Начислены страховые взносы")?;
+                    self.e(account, None, "70", e, *gross, 0, ts("Начислена зарплата"))?;
+                    self.e("70", e, "68.01", None, gross.mul_div(NDFL_PERCENT, 100), 0, ts("Удержан НДФЛ"))?;
+                    self.e(account, None, "69", None, gross.mul_div(CONTRIBUTIONS_PERCENT, 100), 0, ts("Начислены страховые взносы"))?;
                 }
             }
             Body::MonthClose => self.close(bal, month)?,
@@ -291,12 +292,12 @@ impl Poster<'_> {
             let initial: Money = self.book.entries.iter().filter(|e| e.dt == "01" && e.dt_sub == sub).map(|e| e.amount).sum();
             let left = cost + bal.get("02", sub).0;
             let amount = initial.mul_div(1, i64::from(asset.life_months)).min(left);
-            self.e("26", None, "02", sub, amount, 0, "Амортизация")?;
+            self.e("26", None, "02", sub, amount, 0, ts("Амортизация"))?;
         }
         // 2. VAT deduction for input VAT.
         for (sub, amount, _) in bal.subs("19") {
             if amount > Money::ZERO {
-                self.e("68.02", None, "19", sub, amount, 0, "Вычет НДС")?;
+                self.e("68.02", None, "19", sub, amount, 0, ts("Вычет НДС"))?;
             }
         }
         // Balances after depreciation (it adds to 26).
@@ -305,7 +306,8 @@ impl Poster<'_> {
             after.apply(e);
         }
         // 3. Close cost accounts into sales.
-        for (from, to, memo) in [("20", "90.02", "Закрытие счёта 20"), ("26", "90.08", "Закрытие счёта 26"), ("44", "90.07", "Закрытие счёта 44")]
+        for (from, to, memo) in
+            [("20", "90.02", ts("Закрытие счёта 20")), ("26", "90.08", ts("Закрытие счёта 26")), ("44", "90.07", ts("Закрытие счёта 44"))]
         {
             let amount = after.total(from);
             if amount > Money::ZERO {
@@ -325,7 +327,7 @@ impl Poster<'_> {
         so_far.extend(self.out.iter().cloned());
         let sales = flow(&["90.01", "90.02", "90.03", "90.07", "90.08"], &so_far);
         let other = flow(&["91.01", "91.02"], &so_far);
-        for (acc, result, memo) in [("90.09", sales, "Финансовый результат от продаж"), ("91.09", other, "Сальдо прочих доходов и расходов")]
+        for (acc, result, memo) in [("90.09", sales, ts("Финансовый результат от продаж")), ("91.09", other, ts("Сальдо прочих доходов и расходов"))]
         {
             if result > Money::ZERO {
                 self.e(acc, None, "99", None, result, 0, memo)?;
@@ -336,7 +338,7 @@ impl Poster<'_> {
         // 6. Profit tax on a profitable month (simplified: no deferred tax).
         let profit = sales + other;
         if profit > Money::ZERO {
-            self.e("99", None, "68.04", None, profit.mul_div(PROFIT_TAX_PERCENT, 100), 0, "Налог на прибыль")?;
+            self.e("99", None, "68.04", None, profit.mul_div(PROFIT_TAX_PERCENT, 100), 0, ts("Налог на прибыль"))?;
         }
         Ok(())
     }
@@ -402,7 +404,7 @@ impl Book {
     pub fn remove(&mut self, id: u32) -> Result<(), LedgerError> {
         match self.doc(id) {
             None => Err(LedgerError::NoDocument),
-            Some(d) if d.posted => Err(LedgerError::Invalid("Сначала отмените проведение".into())),
+            Some(d) if d.posted => Err(LedgerError::Invalid(ts("Сначала отмените проведение").into())),
             Some(_) => {
                 self.docs.retain(|d| d.id != id);
                 Ok(())

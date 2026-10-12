@@ -9,6 +9,7 @@ use gridcraft_ledger::document::{self, Body, ExpenseLine, GoodsLine, OpeningLine
 use gridcraft_ledger::practice::{self, Task};
 use gridcraft_ledger::report;
 use gridcraft_ledger::{Book, Date, DocKind, Document, Money, Sub, accounts};
+use gridcraft_tr::{t as tr, ts};
 use std::path::PathBuf;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -39,15 +40,15 @@ impl Section {
 
     fn title(self) -> &'static str {
         match self {
-            Section::Money => "💰 Деньги",
-            Section::Purchases => "⬇ Закупки",
-            Section::Sales => "⬆ Продажи",
-            Section::Stock => "📦 Склад",
-            Section::People => "👥 Сотрудники",
-            Section::MonthEnd => "🏁 Конец месяца",
-            Section::All => "📒 Все документы",
-            Section::Reports => "📊 Отчёты",
-            Section::Catalogs => "📚 Справочники",
+            Section::Money => ts("💰 Деньги"),
+            Section::Purchases => ts("⬇ Закупки"),
+            Section::Sales => ts("⬆ Продажи"),
+            Section::Stock => ts("📦 Склад"),
+            Section::People => ts("👥 Сотрудники"),
+            Section::MonthEnd => ts("🏁 Конец месяца"),
+            Section::All => ts("📒 Все документы"),
+            Section::Reports => ts("📊 Отчёты"),
+            Section::Catalogs => ts("📚 Справочники"),
         }
     }
 
@@ -78,11 +79,11 @@ impl ReportKind {
     const ALL: [ReportKind; 5] = [ReportKind::Trial, ReportKind::Card, ReportKind::Analysis, ReportKind::Stock, ReportKind::Results];
     fn title(self) -> &'static str {
         match self {
-            ReportKind::Trial => "Оборотно-сальдовая ведомость",
-            ReportKind::Card => "Карточка счёта",
-            ReportKind::Analysis => "Анализ счёта",
-            ReportKind::Stock => "Остатки товаров",
-            ReportKind::Results => "Финансовый результат",
+            ReportKind::Trial => ts("Оборотно-сальдовая ведомость"),
+            ReportKind::Card => ts("Карточка счёта"),
+            ReportKind::Analysis => ts("Анализ счёта"),
+            ReportKind::Stock => ts("Остатки товаров"),
+            ReportKind::Results => ts("Финансовый результат"),
         }
     }
 }
@@ -143,7 +144,7 @@ impl LedgerView {
     /// Loads the saved books next to the progress file, or the demo company.
     pub fn load(path: Option<PathBuf>) -> LedgerView {
         let saved = path.as_ref().and_then(|p| std::fs::read_to_string(p).ok()).and_then(|s| Book::from_json(&s).ok());
-        let book = saved.or_else(|| gridcraft_ledger::demo::january().ok()).unwrap_or_else(|| Book::new("Моя организация"));
+        let book = saved.or_else(|| gridcraft_ledger::demo::january().ok()).unwrap_or_else(|| Book::new(ts("Моя организация")));
         LedgerView {
             book,
             section: Section::All,
@@ -184,7 +185,7 @@ impl LedgerView {
             show_hint: false,
             results: Vec::new(),
         });
-        self.message = Some((true, "Практикум начат: демо-компания, январь закрыт. Работаем в феврале.".into()));
+        self.message = Some((true, ts("Практикум начат: демо-компания, январь закрыт. Работаем в феврале.").into()));
         self.save();
     }
 
@@ -193,7 +194,7 @@ impl LedgerView {
         match self.book.to_json() {
             Ok(s) => {
                 if let Err(e) = std::fs::write(path, s) {
-                    self.message = Some((false, format!("Не удалось сохранить учёт: {e}")));
+                    self.message = Some((false, tr(&format!("Не удалось сохранить учёт: {e}"))));
                 }
             }
             Err(e) => self.message = Some((false, e.to_string())),
@@ -220,7 +221,7 @@ impl LedgerView {
             DocKind::Receipt => Body::Receipt { supplier: cp, account: "41".into(), lines: vec![GoodsLine { item, qty: 1, amount: Money::ZERO }] },
             DocKind::Services => Body::Services {
                 supplier: cp,
-                lines: vec![ExpenseLine { text: "Услуги".into(), amount: Money::ZERO, vat: Vat::R22, account: "26".into() }],
+                lines: vec![ExpenseLine { text: ts("Услуги").into(), amount: Money::ZERO, vat: Vat::R22, account: "26".into() }],
             },
             DocKind::Sale => Body::Sale { customer: cp, lines: vec![GoodsLine { item, qty: 1, amount: Money::ZERO }] },
             DocKind::AssetPurchase => Body::AssetPurchase { supplier: cp, asset, amount: Money::ZERO, vat: Vat::R22 },
@@ -231,7 +232,7 @@ impl LedgerView {
             DocKind::CashOut => Body::CashOut { to: document::CashOut::Advance(emp), amount: Money::ZERO },
             DocKind::AdvanceReport => Body::AdvanceReport {
                 employee: emp,
-                lines: vec![ExpenseLine { text: "Расходы".into(), amount: Money::ZERO, vat: Vat::None, account: "26".into() }],
+                lines: vec![ExpenseLine { text: ts("Расходы").into(), amount: Money::ZERO, vat: Vat::None, account: "26".into() }],
             },
             DocKind::Payroll => Body::Payroll { account: "26".into(), lines: c.employees.iter().map(|e| (e.id, e.salary)).collect() },
             DocKind::MonthClose => Body::MonthClose,
@@ -259,8 +260,14 @@ impl LedgerView {
         self.save();
         match result {
             Ok(()) => {
-                self.message =
-                    Some((true, if post || was_posted { format!("{} проведён", draft.number) } else { format!("{} записан", draft.number) }));
+                self.message = Some((
+                    true,
+                    if post || was_posted {
+                        tr(&format!("{} проведён", draft.number))
+                    } else {
+                        tr(&format!("{} записан", draft.number))
+                    },
+                ));
                 if let Some((d, fresh)) = self.draft.as_mut() {
                     d.posted = post || was_posted;
                     *fresh = false;
@@ -268,7 +275,7 @@ impl LedgerView {
                 true
             }
             Err(e) => {
-                self.message = Some((false, format!("Не удалось провести: {e}")));
+                self.message = Some((false, tr(&format!("Не удалось провести: {e}"))));
                 false
             }
         }
@@ -290,15 +297,15 @@ impl LedgerView {
             Body::Sale { customer, .. } => cp(*customer),
             Body::BankIn { from, .. } => match from {
                 document::BankIn::Customer(id) | document::BankIn::Loan(id) => cp(*id),
-                document::BankIn::FromCash => "Из кассы".into(),
+                document::BankIn::FromCash => ts("Из кассы").into(),
             },
             Body::BankOut { to, .. } => match to {
                 document::BankOut::Supplier(id) | document::BankOut::LoanRepay(id) => cp(*id),
                 document::BankOut::Salary(id) => emp(*id),
-                document::BankOut::Tax(acc) => format!("Налог ({acc})"),
-                document::BankOut::Insurance => "Страховые взносы".into(),
-                document::BankOut::Fee => "Комиссия банка".into(),
-                document::BankOut::ToCash => "В кассу".into(),
+                document::BankOut::Tax(acc) => tr(&format!("Налог ({acc})")),
+                document::BankOut::Insurance => ts("Страховые взносы").into(),
+                document::BankOut::Fee => ts("Комиссия банка").into(),
+                document::BankOut::ToCash => ts("В кассу").into(),
             },
             Body::CashIn { from, .. } => match from {
                 document::CashIn::Customer(id) => cp(*id),
@@ -309,8 +316,8 @@ impl LedgerView {
                 document::CashOut::Supplier(id) => cp(*id),
             },
             Body::AdvanceReport { employee, .. } => emp(*employee),
-            Body::Payroll { lines, .. } => format!("{} сотр.", lines.len()),
-            Body::WriteOff { account, .. } => format!("на счёт {account}"),
+            Body::Payroll { lines, .. } => tr(&format!("{} сотр.", lines.len())),
+            Body::WriteOff { account, .. } => tr(&format!("на счёт {account}")),
             Body::Opening { .. } | Body::MonthClose => String::new(),
         }
     }
@@ -319,7 +326,7 @@ impl LedgerView {
 const MONTHS: [&str; 12] = ["Январь", "Февраль", "Март", "Апрель", "Май", "Июнь", "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"];
 
 fn month_name(m: u8) -> &'static str {
-    MONTHS.get(usize::from(m.clamp(1, 12)) - 1).copied().unwrap_or("")
+    ts(MONTHS.get(usize::from(m.clamp(1, 12)) - 1).copied().unwrap_or(""))
 }
 
 /// Draws the whole program. Returns true when the user wants to go back to the trainer.
@@ -328,18 +335,18 @@ pub fn show(v: &mut LedgerView, ui: &mut Ui, p: &Palette, seed: u64) -> Outcome 
     let mut back = false;
     egui::Panel::top("ledger_top").frame(egui::Frame::NONE.fill(p.card).inner_margin(egui::Margin::symmetric(16, 10))).show(ui, |ui| {
         ui.horizontal(|ui| {
-            if ui.button("← К тренажёру").clicked() {
+            if ui.button(ts("← К тренажёру")).clicked() {
                 back = true;
             }
             ui.add_space(8.0);
-            ui.label(RichText::new("📒 Учёт").size(22.0).strong().color(p.text));
+            ui.label(RichText::new(ts("📒 Учёт")).size(22.0).strong().color(p.text));
             ui.label(RichText::new(&v.book.org).size(16.0).color(p.muted));
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if v.practice.is_none() && ui.button("🎯 Практикум: февраль").on_hover_text("11 заданий на время на демо-компании").clicked()
+                if v.practice.is_none() && ui.button(ts("🎯 Практикум: февраль")).on_hover_text(ts("11 заданий на время на демо-компании")).clicked()
                 {
                     v.start_practice(seed);
                 }
-                if ui.button("Начать заново (демо)").on_hover_text("Вернуть демо-компанию: январь с проведёнными документами").clicked()
+                if ui.button(ts("Начать заново (демо)")).on_hover_text(ts("Вернуть демо-компанию: январь с проведёнными документами")).clicked()
                     && let Ok(b) = gridcraft_ledger::demo::january()
                 {
                     v.book = b;
@@ -347,7 +354,7 @@ pub fn show(v: &mut LedgerView, ui: &mut Ui, p: &Palette, seed: u64) -> Outcome 
                     v.selected = None;
                     v.practice = None;
                     v.save();
-                    v.message = Some((true, "Демо-компания восстановлена".into()));
+                    v.message = Some((true, ts("Демо-компания восстановлена").into()));
                 }
                 let (from, to) = (v.from_month, v.to_month);
                 egui::ComboBox::from_id_salt("ledger_to").selected_text(month_name(to)).show_ui(ui, |ui| {
@@ -362,7 +369,7 @@ pub fn show(v: &mut LedgerView, ui: &mut Ui, p: &Palette, seed: u64) -> Outcome 
                     }
                 });
                 v.to_month = v.to_month.max(v.from_month);
-                ui.label(RichText::new("Период 2026:").color(p.muted));
+                ui.label(RichText::new(ts("Период 2026:")).color(p.muted));
             });
         });
     });
@@ -382,7 +389,7 @@ pub fn show(v: &mut LedgerView, ui: &mut Ui, p: &Palette, seed: u64) -> Outcome 
                 }
             }
             ui.add_space(12.0);
-            ui.label(RichText::new("Все суммы в рублях. Документ меняет учёт, только когда он проведён.").size(11.0).color(p.muted));
+            ui.label(RichText::new(ts("Все суммы в рублях. Документ меняет учёт, только когда он проведён.")).size(11.0).color(p.muted));
         },
     );
     if !v.book.problems.is_empty() || v.message.is_some() {
@@ -421,10 +428,10 @@ fn practice_bar(v: &mut LedgerView, ui: &mut Ui, p: &Palette, out: &mut Outcome)
         let secs = pr.started.elapsed().as_secs_f32();
         ui.ctx().request_repaint_after(std::time::Duration::from_millis(200));
         ui.horizontal(|ui| {
-            ui.label(RichText::new(format!("🎯 Практикум · {} / {}", pr.index + 1, pr.tasks.len())).strong().color(p.green_dark));
+            ui.label(RichText::new(tr(&format!("🎯 Практикум · {} / {}", pr.index + 1, pr.tasks.len()))).strong().color(p.green_dark));
             ui.label(RichText::new(&task.title).size(17.0).strong().color(p.text));
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if ui.small_button("✕ Завершить").clicked() {
+                if ui.small_button(ts("✕ Завершить")).clicked() {
                     stop = true;
                 }
                 let goal = task.goal_seconds as f32;
@@ -437,25 +444,25 @@ fn practice_bar(v: &mut LedgerView, ui: &mut Ui, p: &Palette, out: &mut Outcome)
                 } else {
                     p.red_dark
                 };
-                ui.label(RichText::new(format!("⏱ {:.0} с  (норма {} с)", secs, task.goal_seconds)).strong().color(c));
+                ui.label(RichText::new(tr(&format!("⏱ {:.0} с  (норма {} с)", secs, task.goal_seconds))).strong().color(c));
             });
         });
         ui.label(RichText::new(&task.text).size(15.0).color(p.text));
         ui.horizontal(|ui| {
             if task.asks_number() {
-                ui.label("Ответ:");
+                ui.label(ts("Ответ:"));
                 let r = ui.add(egui::TextEdit::singleline(&mut pr.answer).desired_width(160.0).hint_text("0,00"));
                 if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                     check = true;
                 }
             }
-            if big_button(ui, "✔ ПРОВЕРИТЬ", p.green, vec2(150.0, 34.0)).clicked() {
+            if big_button(ui, ts("✔ ПРОВЕРИТЬ"), p.green, vec2(150.0, 34.0)).clicked() {
                 check = true;
             }
-            if ui.button(if pr.show_hint { "Скрыть подсказку" } else { "💡 Подсказка" }).clicked() {
+            if ui.button(if pr.show_hint { ts("Скрыть подсказку") } else { ts("💡 Подсказка") }).clicked() {
                 pr.show_hint = !pr.show_hint;
             }
-            if ui.button("Пропустить").clicked() {
+            if ui.button(ts("Пропустить")).clicked() {
                 skip = true;
             }
             if let Some(e) = &pr.error {
@@ -504,7 +511,7 @@ fn practice_bar(v: &mut LedgerView, ui: &mut Ui, p: &Palette, out: &mut Outcome)
         let total = pr.tasks.len();
         let secs = pr.began.elapsed().as_secs_f32();
         out.finished = Some((solved, total));
-        v.message = Some((true, format!("Практикум завершён: {solved} из {total} за {:.0} мин {:.0} с", (secs / 60.0).floor(), secs % 60.0)));
+        v.message = Some((true, tr(&format!("Практикум завершён: {solved} из {total} за {:.0} мин {:.0} с", (secs / 60.0).floor(), secs % 60.0))));
         v.practice = None;
     }
 }
@@ -513,7 +520,7 @@ fn journal(v: &mut LedgerView, ui: &mut Ui, p: &Palette) {
     let kinds = v.section.kinds();
     ui.label(RichText::new(v.section.title()).size(22.0).strong().color(p.text));
     ui.horizontal_wrapped(|ui| {
-        ui.label(RichText::new("Создать:").color(p.muted));
+        ui.label(RichText::new(ts("Создать:")).color(p.muted));
         for k in kinds {
             if *k == DocKind::Opening && v.section != Section::All {
                 continue;
@@ -537,24 +544,24 @@ fn journal(v: &mut LedgerView, ui: &mut Ui, p: &Palette) {
         let sel = v.selected.filter(|s| rows.iter().any(|r| r.0 == *s));
         ui.add_enabled_ui(sel.is_some(), |ui| {
             if let Some(id) = sel {
-                if ui.button("Открыть").clicked() {
+                if ui.button(ts("Открыть")).clicked() {
                     open = Some(id);
                 }
-                if ui.button("✔ Провести").clicked() {
+                if ui.button(ts("✔ Провести")).clicked() {
                     act = Some(("post", id));
                 }
-                if ui.button("Отменить проведение").clicked() {
+                if ui.button(ts("Отменить проведение")).clicked() {
                     act = Some(("unpost", id));
                 }
-                if ui.button("Дт/Кт проводки").clicked() {
+                if ui.button(ts("Дт/Кт проводки")).clicked() {
                     v.show_entries = !v.show_entries;
                 }
-                if ui.button("🗑 Удалить").clicked() {
+                if ui.button(ts("🗑 Удалить")).clicked() {
                     act = Some(("remove", id));
                 }
             } else {
-                let _ = ui.button("Открыть");
-                let _ = ui.button("✔ Провести");
+                let _ = ui.button(ts("Открыть"));
+                let _ = ui.button(ts("✔ Провести"));
             }
         });
     });
@@ -566,14 +573,14 @@ fn journal(v: &mut LedgerView, ui: &mut Ui, p: &Palette) {
         .auto_shrink([false, false])
         .show(ui, |ui| {
             egui::Grid::new("journal_grid").striped(true).min_col_width(60.0).spacing(vec2(16.0, 6.0)).show(ui, |ui| {
-                for h in ["", "Дата", "Номер", "Документ", "Контрагент / кому", "Сумма"] {
+                for h in ["", ts("Дата"), ts("Номер"), ts("Документ"), ts("Контрагент / кому"), ts("Сумма")] {
                     ui.label(RichText::new(h).strong().color(p.muted));
                 }
                 ui.end_row();
                 for (id, posted, date, number, kind, party, total) in &rows {
                     let on = v.selected == Some(*id);
                     ui.label(RichText::new(if *posted { "✔" } else { "○" }).color(if *posted { p.green } else { p.muted }))
-                        .on_hover_text(if *posted { "Проведён" } else { "Не проведён" });
+                        .on_hover_text(if *posted { ts("Проведён") } else { ts("Не проведён") });
                     let r = ui.selectable_label(on, date);
                     let r2 = ui.selectable_label(on, number);
                     let r3 = ui.selectable_label(on, kind);
@@ -591,7 +598,7 @@ fn journal(v: &mut LedgerView, ui: &mut Ui, p: &Palette) {
                 }
             });
             if rows.is_empty() {
-                ui.label(RichText::new("За выбранный период документов нет. Создай первый кнопкой выше.").color(p.muted));
+                ui.label(RichText::new(ts("За выбранный период документов нет. Создай первый кнопкой выше.")).color(p.muted));
             }
         });
     if v.show_entries
@@ -607,9 +614,9 @@ fn journal(v: &mut LedgerView, ui: &mut Ui, p: &Palette) {
     }
     if let Some((what, id)) = act {
         let r = match what {
-            "post" => v.book.post(id).map(|_| "проведён"),
-            "unpost" => v.book.unpost(id).map(|_| "проведение отменено"),
-            _ => v.book.remove(id).map(|_| "удалён"),
+            "post" => v.book.post(id).map(|_| ts("проведён")),
+            "unpost" => v.book.unpost(id).map(|_| ts("проведение отменено")),
+            _ => v.book.remove(id).map(|_| ts("удалён")),
         };
         let num = v.book.doc(id).map(|d| d.number.clone()).unwrap_or_default();
         v.message = Some(match r {
@@ -626,15 +633,16 @@ fn sub_text(v: &LedgerView, s: Option<Sub>) -> String {
 
 fn entries_table(v: &LedgerView, ui: &mut Ui, p: &Palette, id: u32) {
     let label = v.book.doc(id).map(|d| d.label()).unwrap_or_default();
-    ui.label(RichText::new(format!("Проводки: {label}")).strong().color(p.text));
+    ui.label(RichText::new(tr(&format!("Проводки: {label}"))).strong().color(p.text));
     let entries: Vec<_> = v.book.entries_of(id).collect();
     if entries.is_empty() {
-        ui.label(RichText::new("Проводок нет: документ не проведён.").color(p.muted));
+        ui.label(RichText::new(ts("Проводок нет: документ не проведён.")).color(p.muted));
         return;
     }
     egui::ScrollArea::vertical().id_salt(("entries", id)).max_height(200.0).show(ui, |ui| {
         egui::Grid::new(("entries_grid", id)).striped(true).spacing(vec2(16.0, 4.0)).show(ui, |ui| {
-            for h in ["Дт", "Аналитика Дт", "Кт", "Аналитика Кт", "Сумма", "Кол-во", "Содержание"] {
+            for h in [ts("Дт"), ts("Аналитика Дт"), ts("Кт"), ts("Аналитика Кт"), ts("Сумма"), ts("Кол-во"), ts("Содержание")]
+            {
                 ui.label(RichText::new(h).strong().color(p.muted));
             }
             ui.end_row();
@@ -660,7 +668,7 @@ fn money_edit(ui: &mut Ui, m: &mut Money) {
 }
 
 fn pick_counterparty(ui: &mut Ui, v: &Book, id: &mut u32, salt: &str) {
-    let name = v.catalogs.counterparty(*id).map(|c| c.name.clone()).unwrap_or_else(|| "— выбрать —".into());
+    let name = v.catalogs.counterparty(*id).map(|c| c.name.clone()).unwrap_or_else(|| ts("— выбрать —").into());
     egui::ComboBox::from_id_salt(salt).width(260.0).selected_text(name).show_ui(ui, |ui| {
         for c in &v.catalogs.counterparties {
             ui.selectable_value(id, c.id, &c.name);
@@ -669,7 +677,7 @@ fn pick_counterparty(ui: &mut Ui, v: &Book, id: &mut u32, salt: &str) {
 }
 
 fn pick_employee(ui: &mut Ui, v: &Book, id: &mut u32, salt: &str) {
-    let name = v.catalogs.employee(*id).map(|c| c.name.clone()).unwrap_or_else(|| "— выбрать —".into());
+    let name = v.catalogs.employee(*id).map(|c| c.name.clone()).unwrap_or_else(|| ts("— выбрать —").into());
     egui::ComboBox::from_id_salt(salt).width(260.0).selected_text(name).show_ui(ui, |ui| {
         for c in &v.catalogs.employees {
             ui.selectable_value(id, c.id, &c.name);
@@ -678,7 +686,7 @@ fn pick_employee(ui: &mut Ui, v: &Book, id: &mut u32, salt: &str) {
 }
 
 fn pick_item(ui: &mut Ui, v: &Book, id: &mut u32, salt: impl std::hash::Hash + std::fmt::Debug) {
-    let name = v.catalogs.item(*id).map(|c| c.name.clone()).unwrap_or_else(|| "— выбрать —".into());
+    let name = v.catalogs.item(*id).map(|c| c.name.clone()).unwrap_or_else(|| ts("— выбрать —").into());
     egui::ComboBox::from_id_salt(salt).width(240.0).selected_text(name).show_ui(ui, |ui| {
         for c in &v.catalogs.items {
             ui.selectable_value(id, c.id, format!("{} ({})", c.name, c.vat.label()));
@@ -687,7 +695,7 @@ fn pick_item(ui: &mut Ui, v: &Book, id: &mut u32, salt: impl std::hash::Hash + s
 }
 
 fn pick_account(ui: &mut Ui, acc: &mut String, choices: &[&str], salt: impl std::hash::Hash + std::fmt::Debug) {
-    let label = |c: &str| accounts::account(c).map(|a| format!("{} {}", a.code, a.name)).unwrap_or_else(|| c.to_string());
+    let label = |c: &str| accounts::account(c).map(|a| format!("{} {}", a.code, ts(a.name))).unwrap_or_else(|| c.to_string());
     egui::ComboBox::from_id_salt(salt).width(240.0).selected_text(label(acc)).show_ui(ui, |ui| {
         for c in choices {
             ui.selectable_value(acc, (*c).to_string(), label(c));
@@ -706,8 +714,14 @@ fn pick_vat(ui: &mut Ui, vat: &mut Vat, salt: impl std::hash::Hash + std::fmt::D
 fn goods_lines(ui: &mut Ui, book: &Book, lines: &mut Vec<GoodsLine>, p: &Palette, with_amount: bool) {
     let mut remove = None;
     egui::Grid::new("goods").striped(true).spacing(vec2(12.0, 6.0)).show(ui, |ui| {
-        for h in ["№", "Номенклатура", "Количество", if with_amount { "Сумма с НДС" } else { "" }, if with_amount { "в т.ч. НДС" } else { "" }, ""]
-        {
+        for h in [
+            "№",
+            ts("Номенклатура"),
+            ts("Количество"),
+            if with_amount { ts("Сумма с НДС") } else { "" },
+            if with_amount { ts("в т.ч. НДС") } else { "" },
+            "",
+        ] {
             ui.label(RichText::new(h).strong().color(p.muted));
         }
         ui.end_row();
@@ -732,7 +746,7 @@ fn goods_lines(ui: &mut Ui, book: &Book, lines: &mut Vec<GoodsLine>, p: &Palette
     if let Some(i) = remove {
         lines.remove(i);
     }
-    if ui.button("+ Добавить строку").clicked() {
+    if ui.button(ts("+ Добавить строку")).clicked() {
         let item = book.catalogs.items.first().map(|x| x.id).unwrap_or(0);
         lines.push(GoodsLine { item, qty: 1, amount: Money::ZERO });
     }
@@ -743,7 +757,7 @@ const COST_ACCOUNTS: [&str; 4] = ["26", "44", "20", "91.02"];
 fn expense_lines(ui: &mut Ui, lines: &mut Vec<ExpenseLine>, p: &Palette) {
     let mut remove = None;
     egui::Grid::new("expenses").striped(true).spacing(vec2(12.0, 6.0)).show(ui, |ui| {
-        for h in ["№", "Содержание", "Сумма", "НДС", "Счёт затрат", ""] {
+        for h in ["№", ts("Содержание"), ts("Сумма"), ts("НДС"), ts("Счёт затрат"), ""] {
             ui.label(RichText::new(h).strong().color(p.muted));
         }
         ui.end_row();
@@ -762,7 +776,7 @@ fn expense_lines(ui: &mut Ui, lines: &mut Vec<ExpenseLine>, p: &Palette) {
     if let Some(i) = remove {
         lines.remove(i);
     }
-    if ui.button("+ Добавить строку").clicked() {
+    if ui.button(ts("+ Добавить строку")).clicked() {
         lines.push(ExpenseLine { text: String::new(), amount: Money::ZERO, vat: Vat::R22, account: "26".into() });
     }
 }
@@ -776,15 +790,15 @@ fn form(v: &mut LedgerView, ui: &mut Ui, p: &Palette) {
             ui.label(RichText::new(d.body.kind().title()).size(22.0).strong().color(p.text));
             ui.label(RichText::new(&d.number).size(18.0).color(p.muted));
             let (t, c) = if book.doc(d.id).is_some_and(|x| x.posted) {
-                ("✔ Проведён", p.green_dark)
+                (ts("✔ Проведён"), p.green_dark)
             } else {
-                ("○ Не проведён", p.muted)
+                (ts("○ Не проведён"), p.muted)
             };
             ui.label(RichText::new(t).color(c));
         });
         ui.add_space(8.0);
         egui::Grid::new("form_head").spacing(vec2(12.0, 8.0)).show(ui, |ui| {
-            ui.label("Дата:");
+            ui.label(ts("Дата:"));
             let mut s = d.date.to_string();
             let r = ui.add(egui::TextEdit::singleline(&mut s).desired_width(110.0));
             if r.changed()
@@ -795,55 +809,55 @@ fn form(v: &mut LedgerView, ui: &mut Ui, p: &Palette) {
             ui.end_row();
             match &mut d.body {
                 Body::Receipt { supplier, account, .. } => {
-                    ui.label("Поставщик:");
+                    ui.label(ts("Поставщик:"));
                     pick_counterparty(ui, &book, supplier, "f_sup");
                     ui.end_row();
-                    ui.label("Приходовать на счёт:");
+                    ui.label(ts("Приходовать на счёт:"));
                     pick_account(ui, account, &["41", "10"], "f_acc41");
                     ui.end_row();
                 }
                 Body::Services { supplier, .. } => {
-                    ui.label("Поставщик:");
+                    ui.label(ts("Поставщик:"));
                     pick_counterparty(ui, &book, supplier, "f_sup");
                     ui.end_row();
                 }
                 Body::Sale { customer, .. } => {
-                    ui.label("Покупатель:");
+                    ui.label(ts("Покупатель:"));
                     pick_counterparty(ui, &book, customer, "f_cus");
                     ui.end_row();
                 }
                 Body::AssetPurchase { supplier, asset, amount, vat } => {
-                    ui.label("Поставщик:");
+                    ui.label(ts("Поставщик:"));
                     pick_counterparty(ui, &book, supplier, "f_sup");
                     ui.end_row();
-                    ui.label("Основное средство:");
-                    let name = book.catalogs.asset(*asset).map(|a| a.name.clone()).unwrap_or_else(|| "— выбрать —".into());
+                    ui.label(ts("Основное средство:"));
+                    let name = book.catalogs.asset(*asset).map(|a| a.name.clone()).unwrap_or_else(|| ts("— выбрать —").into());
                     egui::ComboBox::from_id_salt("f_asset").width(260.0).selected_text(name).show_ui(ui, |ui| {
                         for a in &book.catalogs.assets {
-                            ui.selectable_value(asset, a.id, format!("{} ({} мес.)", a.name, a.life_months));
+                            ui.selectable_value(asset, a.id, tr(&format!("{} ({} мес.)", a.name, a.life_months)));
                         }
                     });
                     ui.end_row();
-                    ui.label("Стоимость с НДС:");
+                    ui.label(ts("Стоимость с НДС:"));
                     money_edit(ui, amount);
                     ui.end_row();
-                    ui.label("НДС:");
+                    ui.label(ts("НДС:"));
                     pick_vat(ui, vat, "f_vat");
                     ui.end_row();
                 }
                 Body::WriteOff { account, .. } => {
-                    ui.label("Списать на счёт:");
+                    ui.label(ts("Списать на счёт:"));
                     pick_account(ui, account, &COST_ACCOUNTS, "f_wo");
                     ui.end_row();
                 }
                 Body::BankIn { from, amount } => {
-                    ui.label("Вид операции:");
+                    ui.label(ts("Вид операции:"));
                     let mut kind = match from {
                         document::BankIn::Customer(_) => 0,
                         document::BankIn::Loan(_) => 1,
                         document::BankIn::FromCash => 2,
                     };
-                    let names = ["Оплата от покупателя", "Получение займа", "Взнос наличных из кассы"];
+                    let names = [ts("Оплата от покупателя"), ts("Получение займа"), ts("Взнос наличных из кассы")];
                     egui::ComboBox::from_id_salt("f_bin").width(260.0).selected_text(names.get(kind).copied().unwrap_or("")).show_ui(ui, |ui| {
                         for (i, n) in names.iter().enumerate() {
                             ui.selectable_value(&mut kind, i, *n);
@@ -855,7 +869,7 @@ fn form(v: &mut LedgerView, ui: &mut Ui, p: &Palette) {
                         document::BankIn::FromCash => book.catalogs.counterparties.first().map(|c| c.id).unwrap_or(0),
                     };
                     if kind < 2 {
-                        ui.label("Плательщик:");
+                        ui.label(ts("Плательщик:"));
                         pick_counterparty(ui, &book, &mut cp, "f_payer");
                         ui.end_row();
                     }
@@ -864,19 +878,19 @@ fn form(v: &mut LedgerView, ui: &mut Ui, p: &Palette) {
                         1 => document::BankIn::Loan(cp),
                         _ => document::BankIn::FromCash,
                     };
-                    ui.label("Сумма:");
+                    ui.label(ts("Сумма:"));
                     money_edit(ui, amount);
                     ui.end_row();
                 }
                 Body::BankOut { to, amount } => {
                     let names = [
-                        "Оплата поставщику",
-                        "Уплата налога",
-                        "Уплата страховых взносов",
-                        "Выплата зарплаты",
-                        "Комиссия банка",
-                        "Возврат займа",
-                        "Снятие наличных в кассу",
+                        ts("Оплата поставщику"),
+                        ts("Уплата налога"),
+                        ts("Уплата страховых взносов"),
+                        ts("Выплата зарплаты"),
+                        ts("Комиссия банка"),
+                        ts("Возврат займа"),
+                        ts("Снятие наличных в кассу"),
                     ];
                     let mut kind = match to {
                         document::BankOut::Supplier(_) => 0,
@@ -887,7 +901,7 @@ fn form(v: &mut LedgerView, ui: &mut Ui, p: &Palette) {
                         document::BankOut::LoanRepay(_) => 5,
                         document::BankOut::ToCash => 6,
                     };
-                    ui.label("Вид операции:");
+                    ui.label(ts("Вид операции:"));
                     egui::ComboBox::from_id_salt("f_bout").width(260.0).selected_text(names.get(kind).copied().unwrap_or("")).show_ui(ui, |ui| {
                         for (i, n) in names.iter().enumerate() {
                             ui.selectable_value(&mut kind, i, *n);
@@ -908,17 +922,17 @@ fn form(v: &mut LedgerView, ui: &mut Ui, p: &Palette) {
                     };
                     match kind {
                         0 | 5 => {
-                            ui.label("Получатель:");
+                            ui.label(ts("Получатель:"));
                             pick_counterparty(ui, &book, &mut cp, "f_rcpt");
                             ui.end_row();
                         }
                         1 => {
-                            ui.label("Налог:");
+                            ui.label(ts("Налог:"));
                             pick_account(ui, &mut tax, &["68.01", "68.02", "68.04"], "f_tax");
                             ui.end_row();
                         }
                         3 => {
-                            ui.label("Сотрудник:");
+                            ui.label(ts("Сотрудник:"));
                             pick_employee(ui, &book, &mut emp, "f_emp");
                             ui.end_row();
                         }
@@ -933,14 +947,14 @@ fn form(v: &mut LedgerView, ui: &mut Ui, p: &Palette) {
                         5 => document::BankOut::LoanRepay(cp),
                         _ => document::BankOut::ToCash,
                     };
-                    ui.label("Сумма:");
+                    ui.label(ts("Сумма:"));
                     money_edit(ui, amount);
                     ui.end_row();
                 }
                 Body::CashIn { from, amount } => {
-                    let names = ["Оплата от покупателя", "Возврат подотчётных денег"];
+                    let names = [ts("Оплата от покупателя"), ts("Возврат подотчётных денег")];
                     let mut kind = usize::from(matches!(from, document::CashIn::AdvanceReturn(_)));
-                    ui.label("Вид операции:");
+                    ui.label(ts("Вид операции:"));
                     egui::ComboBox::from_id_salt("f_cin").width(260.0).selected_text(names.get(kind).copied().unwrap_or("")).show_ui(ui, |ui| {
                         for (i, n) in names.iter().enumerate() {
                             ui.selectable_value(&mut kind, i, *n);
@@ -952,26 +966,26 @@ fn form(v: &mut LedgerView, ui: &mut Ui, p: &Palette) {
                         document::CashIn::AdvanceReturn(e) => (book.catalogs.counterparties.first().map(|c| c.id).unwrap_or(0), *e),
                     };
                     if kind == 0 {
-                        ui.label("Покупатель:");
+                        ui.label(ts("Покупатель:"));
                         pick_counterparty(ui, &book, &mut cp, "f_cincp");
                     } else {
-                        ui.label("Сотрудник:");
+                        ui.label(ts("Сотрудник:"));
                         pick_employee(ui, &book, &mut emp, "f_cinemp");
                     }
                     ui.end_row();
                     *from = if kind == 0 { document::CashIn::Customer(cp) } else { document::CashIn::AdvanceReturn(emp) };
-                    ui.label("Сумма:");
+                    ui.label(ts("Сумма:"));
                     money_edit(ui, amount);
                     ui.end_row();
                 }
                 Body::CashOut { to, amount } => {
-                    let names = ["Выдача под отчёт", "Выплата зарплаты", "Оплата поставщику"];
+                    let names = [ts("Выдача под отчёт"), ts("Выплата зарплаты"), ts("Оплата поставщику")];
                     let mut kind = match to {
                         document::CashOut::Advance(_) => 0,
                         document::CashOut::Salary(_) => 1,
                         document::CashOut::Supplier(_) => 2,
                     };
-                    ui.label("Вид операции:");
+                    ui.label(ts("Вид операции:"));
                     egui::ComboBox::from_id_salt("f_cout").width(260.0).selected_text(names.get(kind).copied().unwrap_or("")).show_ui(ui, |ui| {
                         for (i, n) in names.iter().enumerate() {
                             ui.selectable_value(&mut kind, i, *n);
@@ -985,10 +999,10 @@ fn form(v: &mut LedgerView, ui: &mut Ui, p: &Palette) {
                         }
                     };
                     if kind == 2 {
-                        ui.label("Поставщик:");
+                        ui.label(ts("Поставщик:"));
                         pick_counterparty(ui, &book, &mut cp, "f_coutcp");
                     } else {
-                        ui.label("Сотрудник:");
+                        ui.label(ts("Сотрудник:"));
                         pick_employee(ui, &book, &mut emp, "f_coutemp");
                     }
                     ui.end_row();
@@ -997,17 +1011,17 @@ fn form(v: &mut LedgerView, ui: &mut Ui, p: &Palette) {
                         1 => document::CashOut::Salary(emp),
                         _ => document::CashOut::Supplier(cp),
                     };
-                    ui.label("Сумма:");
+                    ui.label(ts("Сумма:"));
                     money_edit(ui, amount);
                     ui.end_row();
                 }
                 Body::AdvanceReport { employee, .. } => {
-                    ui.label("Подотчётное лицо:");
+                    ui.label(ts("Подотчётное лицо:"));
                     pick_employee(ui, &book, employee, "f_adv");
                     ui.end_row();
                 }
                 Body::Payroll { account, .. } => {
-                    ui.label("Счёт затрат:");
+                    ui.label(ts("Счёт затрат:"));
                     pick_account(ui, account, &["26", "44", "20"], "f_pay");
                     ui.end_row();
                 }
@@ -1022,7 +1036,8 @@ fn form(v: &mut LedgerView, ui: &mut Ui, p: &Palette) {
             Body::Payroll { lines, .. } => {
                 let mut remove = None;
                 egui::Grid::new("payroll").striped(true).spacing(vec2(12.0, 6.0)).show(ui, |ui| {
-                    for h in ["Сотрудник", "Начислено", "НДФЛ 13%", "Взносы 30%", "К выплате", ""] {
+                    for h in [ts("Сотрудник"), ts("Начислено"), ts("НДФЛ 13%"), ts("Взносы 30%"), ts("К выплате"), ""]
+                    {
                         ui.label(RichText::new(h).strong().color(p.muted));
                     }
                     ui.end_row();
@@ -1042,7 +1057,7 @@ fn form(v: &mut LedgerView, ui: &mut Ui, p: &Palette) {
                 if let Some(i) = remove {
                     lines.remove(i);
                 }
-                if ui.button("+ Сотрудник").clicked() {
+                if ui.button(ts("+ Сотрудник")).clicked() {
                     let e = book.catalogs.employees.first();
                     lines.push((e.map(|e| e.id).unwrap_or(0), e.map(|e| e.salary).unwrap_or_default()));
                 }
@@ -1051,7 +1066,7 @@ fn form(v: &mut LedgerView, ui: &mut Ui, p: &Palette) {
                 let mut remove = None;
                 let codes: Vec<&str> = accounts::postable().filter(|a| a.code != "000").map(|a| a.code).collect();
                 egui::Grid::new("opening").striped(true).spacing(vec2(12.0, 6.0)).show(ui, |ui| {
-                    for h in ["Счёт", "Дебет", "Кредит", "Кол-во", ""] {
+                    for h in [ts("Счёт"), ts("Дебет"), ts("Кредит"), ts("Кол-во"), ""] {
                         ui.label(RichText::new(h).strong().color(p.muted));
                     }
                     ui.end_row();
@@ -1069,46 +1084,46 @@ fn form(v: &mut LedgerView, ui: &mut Ui, p: &Palette) {
                 if let Some(i) = remove {
                     lines.remove(i);
                 }
-                if ui.button("+ Строка").clicked() {
+                if ui.button(ts("+ Строка")).clicked() {
                     lines.push(OpeningLine { account: "51".into(), sub: None, debit: Money::ZERO, credit: Money::ZERO, qty: 0 });
                 }
             }
             Body::MonthClose => {
-                ui.label(RichText::new(format!("Закрытие месяца: {} {}", month_name(d.date.m), d.date.y)).size(16.0).color(p.text));
+                ui.label(RichText::new(tr(&format!("Закрытие месяца: {} {}", month_name(d.date.m), d.date.y))).size(16.0).color(p.text));
                 for step in [
-                    "1. Амортизация основных средств (Дт 26 Кт 02)",
-                    "2. Вычет входящего НДС (Дт 68.02 Кт 19)",
-                    "3. Закрытие затрат: 26 → 90.08, 44 → 90.07, 20 → 90.02",
-                    "4. Финансовый результат: 90.09 и 91.09 → 99",
-                    "5. Налог на прибыль 25% (Дт 99 Кт 68.04), если месяц прибыльный",
+                    ts("1. Амортизация основных средств (Дт 26 Кт 02)"),
+                    ts("2. Вычет входящего НДС (Дт 68.02 Кт 19)"),
+                    ts("3. Закрытие затрат: 26 → 90.08, 44 → 90.07, 20 → 90.02"),
+                    ts("4. Финансовый результат: 90.09 и 91.09 → 99"),
+                    ts("5. Налог на прибыль 25% (Дт 99 Кт 68.04), если месяц прибыльный"),
                 ] {
                     ui.label(RichText::new(step).color(p.muted));
                 }
-                ui.label(RichText::new("Дата документа — последний день месяца.").size(12.0).color(p.muted));
+                ui.label(RichText::new(ts("Дата документа — последний день месяца.")).size(12.0).color(p.muted));
             }
             _ => {}
         }
         ui.add_space(6.0);
         let total = d.body.total();
         if !total.is_zero() {
-            ui.label(RichText::new(format!("Итого: {total} ₽")).size(18.0).strong().color(p.text));
+            ui.label(RichText::new(tr(&format!("Итого: {total} ₽"))).size(18.0).strong().color(p.text));
         }
         ui.horizontal(|ui| {
-            ui.label("Комментарий:");
+            ui.label(ts("Комментарий:"));
             ui.add(egui::TextEdit::singleline(&mut d.comment).desired_width(400.0));
         });
         ui.add_space(10.0);
         ui.horizontal(|ui| {
-            if big_button(ui, "Провести и закрыть", p.green, vec2(220.0, 42.0)).clicked() {
+            if big_button(ui, ts("Провести и закрыть"), p.green, vec2(220.0, 42.0)).clicked() {
                 action = 1;
             }
-            if ghost_button(ui, "Записать", p, vec2(140.0, 42.0)).clicked() {
+            if ghost_button(ui, ts("Записать"), p, vec2(140.0, 42.0)).clicked() {
                 action = 2;
             }
-            if ghost_button(ui, "Провести", p, vec2(140.0, 42.0)).clicked() {
+            if ghost_button(ui, ts("Провести"), p, vec2(140.0, 42.0)).clicked() {
                 action = 3;
             }
-            if ghost_button(ui, "Закрыть", p, vec2(140.0, 42.0)).clicked() {
+            if ghost_button(ui, ts("Закрыть"), p, vec2(140.0, 42.0)).clicked() {
                 action = 4;
             }
         });
@@ -1153,7 +1168,7 @@ fn reports(v: &mut LedgerView, ui: &mut Ui, p: &Palette) {
     let codes: Vec<&str> = accounts::CHART.iter().filter(|a| a.code != "000").map(|a| a.code).collect();
     if matches!(v.report, ReportKind::Card | ReportKind::Analysis) {
         ui.horizontal(|ui| {
-            ui.label("Счёт:");
+            ui.label(ts("Счёт:"));
             pick_account(ui, &mut v.account, &codes, "rep_acc");
         });
     }
@@ -1162,7 +1177,8 @@ fn reports(v: &mut LedgerView, ui: &mut Ui, p: &Palette) {
         ReportKind::Trial => {
             let rows = report::trial_balance(&v.book, from, to);
             egui::Grid::new("tb").striped(true).min_col_width(60.0).spacing(vec2(14.0, 5.0)).show(ui, |ui| {
-                for h in ["Счёт", "Наименование", "Нач. Дт", "Нач. Кт", "Оборот Дт", "Оборот Кт", "Кон. Дт", "Кон. Кт"]
+                for h in
+                    [ts("Счёт"), ts("Наименование"), ts("Нач. Дт"), ts("Нач. Кт"), ts("Оборот Дт"), ts("Оборот Кт"), ts("Кон. Дт"), ts("Кон. Кт")]
                 {
                     ui.label(RichText::new(h).strong().color(p.muted));
                 }
@@ -1176,7 +1192,7 @@ fn reports(v: &mut LedgerView, ui: &mut Ui, p: &Palette) {
                     } else {
                         let link = ui
                             .link(RichText::new(if sub { format!("  {}", r.code) } else { r.code.clone() }).monospace())
-                            .on_hover_text("Открыть карточку счёта");
+                            .on_hover_text(ts("Открыть карточку счёта"));
                         if link.clicked() {
                             jump = Some(r.code.clone());
                         }
@@ -1193,9 +1209,9 @@ fn reports(v: &mut LedgerView, ui: &mut Ui, p: &Palette) {
         }
         ReportKind::Card => {
             let (open, lines) = report::account_card(&v.book, &v.account, None, from, to);
-            ui.label(format!("Сальдо на начало: {}", side(open)));
+            ui.label(tr(&format!("Сальдо на начало: {}", side(open))));
             egui::Grid::new("card").striped(true).spacing(vec2(14.0, 5.0)).show(ui, |ui| {
-                for h in ["Дата", "Документ", "Операция", "Корр. счёт", "Аналитика", "Дебет", "Кредит", "Сальдо"]
+                for h in [ts("Дата"), ts("Документ"), ts("Операция"), ts("Корр. счёт"), ts("Аналитика"), ts("Дебет"), ts("Кредит"), ts("Сальдо")]
                 {
                     ui.label(RichText::new(h).strong().color(p.muted));
                 }
@@ -1213,18 +1229,18 @@ fn reports(v: &mut LedgerView, ui: &mut Ui, p: &Palette) {
                 }
             });
             let close = lines.last().map(|l| l.balance).unwrap_or(open);
-            ui.label(RichText::new(format!("Сальдо на конец: {}", side(close))).strong());
+            ui.label(RichText::new(tr(&format!("Сальдо на конец: {}", side(close)))).strong());
         }
         ReportKind::Analysis => {
             let rows = report::account_analysis(&v.book, &v.account, from, to);
             egui::Grid::new("analysis").striped(true).min_col_width(120.0).spacing(vec2(14.0, 5.0)).show(ui, |ui| {
-                for h in ["Корр. счёт", "Наименование", "Оборот Дт", "Оборот Кт"] {
+                for h in [ts("Корр. счёт"), ts("Наименование"), ts("Оборот Дт"), ts("Оборот Кт")] {
                     ui.label(RichText::new(h).strong().color(p.muted));
                 }
                 ui.end_row();
                 for (acc, dt, kt) in &rows {
                     ui.label(RichText::new(*acc).monospace());
-                    ui.label(accounts::account(acc).map(|a| a.name).unwrap_or(""));
+                    ui.label(accounts::account(acc).map(|a| ts(a.name)).unwrap_or(""));
                     money_cell(ui, *dt);
                     money_cell(ui, *kt);
                     ui.end_row();
@@ -1233,10 +1249,10 @@ fn reports(v: &mut LedgerView, ui: &mut Ui, p: &Palette) {
         }
         ReportKind::Stock => {
             for acc in ["41", "10"] {
-                ui.label(RichText::new(format!("Счёт {acc} {}", accounts::account(acc).map(|a| a.name).unwrap_or(""))).strong());
+                ui.label(RichText::new(tr(&format!("Счёт {acc} {}", accounts::account(acc).map(|a| ts(a.name)).unwrap_or("")))).strong());
                 let rows = report::account_balance(&v.book, acc, from, to);
                 egui::Grid::new(("stock", acc)).striped(true).min_col_width(110.0).spacing(vec2(14.0, 5.0)).show(ui, |ui| {
-                    for h in ["Номенклатура", "Количество", "Сумма", "Средняя цена"] {
+                    for h in [ts("Номенклатура"), ts("Количество"), ts("Сумма"), ts("Средняя цена")] {
                         ui.label(RichText::new(h).strong().color(p.muted));
                     }
                     ui.end_row();
@@ -1255,17 +1271,17 @@ fn reports(v: &mut LedgerView, ui: &mut Ui, p: &Palette) {
             let r = report::results(&v.book, from, to);
             egui::Grid::new("results").striped(true).min_col_width(160.0).spacing(vec2(14.0, 6.0)).show(ui, |ui| {
                 for (name, m, strong) in [
-                    ("Выручка (с НДС)", r.revenue, false),
-                    ("НДС с выручки", r.vat, false),
-                    ("Себестоимость продаж", r.cost_of_sales, false),
-                    ("Расходы на продажу", r.selling, false),
-                    ("Управленческие расходы", r.admin, false),
-                    ("Прибыль (убыток) от продаж", r.sales_profit, true),
-                    ("Прочие доходы", r.other_income, false),
-                    ("Прочие расходы", r.other_expense, false),
-                    ("Прибыль до налогообложения", r.before_tax, true),
-                    ("Налог на прибыль", r.tax, false),
-                    ("Чистая прибыль", r.net, true),
+                    (ts("Выручка (с НДС)"), r.revenue, false),
+                    (ts("НДС с выручки"), r.vat, false),
+                    (ts("Себестоимость продаж"), r.cost_of_sales, false),
+                    (ts("Расходы на продажу"), r.selling, false),
+                    (ts("Управленческие расходы"), r.admin, false),
+                    (ts("Прибыль (убыток) от продаж"), r.sales_profit, true),
+                    (ts("Прочие доходы"), r.other_income, false),
+                    (ts("Прочие расходы"), r.other_expense, false),
+                    (ts("Прибыль до налогообложения"), r.before_tax, true),
+                    (ts("Налог на прибыль"), r.tax, false),
+                    (ts("Чистая прибыль"), r.net, true),
                 ] {
                     let t = RichText::new(name);
                     ui.label(if strong { t.strong() } else { t });
@@ -1284,9 +1300,9 @@ fn reports(v: &mut LedgerView, ui: &mut Ui, p: &Palette) {
 
 fn side(m: Money) -> String {
     if m > Money::ZERO {
-        format!("Дт {m}")
+        tr(&format!("Дт {m}"))
     } else if m < Money::ZERO {
-        format!("Кт {}", -m)
+        tr(&format!("Кт {}", -m))
     } else {
         "0".into()
     }
@@ -1295,10 +1311,10 @@ fn side(m: Money) -> String {
 fn catalogs(v: &mut LedgerView, ui: &mut Ui, p: &Palette) {
     ui.horizontal(|ui| {
         for (k, name) in [
-            (CatalogKind::Counterparties, "Контрагенты"),
-            (CatalogKind::Items, "Номенклатура"),
-            (CatalogKind::Employees, "Сотрудники"),
-            (CatalogKind::Assets, "Основные средства"),
+            (CatalogKind::Counterparties, ts("Контрагенты")),
+            (CatalogKind::Items, ts("Номенклатура")),
+            (CatalogKind::Employees, ts("Сотрудники")),
+            (CatalogKind::Assets, ts("Основные средства")),
         ] {
             if ui.selectable_label(v.catalog == k, name).clicked() {
                 v.catalog = k;
@@ -1310,10 +1326,10 @@ fn catalogs(v: &mut LedgerView, ui: &mut Ui, p: &Palette) {
     egui::ScrollArea::vertical().id_salt("catalog").max_height(ui.available_height() - 80.0).auto_shrink([false, false]).show(ui, |ui| {
         egui::Grid::new(("cat", v.catalog as u8)).striped(true).min_col_width(140.0).spacing(vec2(14.0, 5.0)).show(ui, |ui| match v.catalog {
             CatalogKind::Counterparties => {
-                ui.label(RichText::new("Наименование").strong().color(p.muted));
-                ui.label(RichText::new("ИНН").strong().color(p.muted));
-                ui.label(RichText::new("Сальдо 60").strong().color(p.muted));
-                ui.label(RichText::new("Сальдо 62").strong().color(p.muted));
+                ui.label(RichText::new(ts("Наименование")).strong().color(p.muted));
+                ui.label(RichText::new(ts("ИНН")).strong().color(p.muted));
+                ui.label(RichText::new(ts("Сальдо 60")).strong().color(p.muted));
+                ui.label(RichText::new(ts("Сальдо 62")).strong().color(p.muted));
                 ui.end_row();
                 let (_, to) = v.period();
                 for x in &c.counterparties {
@@ -1332,7 +1348,7 @@ fn catalogs(v: &mut LedgerView, ui: &mut Ui, p: &Palette) {
                 }
             }
             CatalogKind::Items => {
-                for h in ["Наименование", "Ед.", "НДС"] {
+                for h in [ts("Наименование"), ts("Ед."), ts("НДС")] {
                     ui.label(RichText::new(h).strong().color(p.muted));
                 }
                 ui.end_row();
@@ -1344,7 +1360,7 @@ fn catalogs(v: &mut LedgerView, ui: &mut Ui, p: &Palette) {
                 }
             }
             CatalogKind::Employees => {
-                for h in ["ФИО", "Должность", "Оклад"] {
+                for h in [ts("ФИО"), ts("Должность"), ts("Оклад")] {
                     ui.label(RichText::new(h).strong().color(p.muted));
                 }
                 ui.end_row();
@@ -1356,7 +1372,7 @@ fn catalogs(v: &mut LedgerView, ui: &mut Ui, p: &Palette) {
                 }
             }
             CatalogKind::Assets => {
-                for h in ["Наименование", "Срок, мес."] {
+                for h in [ts("Наименование"), ts("Срок, мес.")] {
                     ui.label(RichText::new(h).strong().color(p.muted));
                 }
                 ui.end_row();
@@ -1370,15 +1386,15 @@ fn catalogs(v: &mut LedgerView, ui: &mut Ui, p: &Palette) {
     });
     ui.separator();
     let (hint, extra) = match v.catalog {
-        CatalogKind::Counterparties => ("Название", "ИНН"),
-        CatalogKind::Items => ("Название", "Ставка НДС: 22, 10, 0 или пусто"),
-        CatalogKind::Employees => ("ФИО", "Оклад, ₽"),
-        CatalogKind::Assets => ("Название", "Срок, месяцев"),
+        CatalogKind::Counterparties => (ts("Название"), ts("ИНН")),
+        CatalogKind::Items => (ts("Название"), ts("Ставка НДС: 22, 10, 0 или пусто")),
+        CatalogKind::Employees => (ts("ФИО"), ts("Оклад, ₽")),
+        CatalogKind::Assets => (ts("Название"), ts("Срок, месяцев")),
     };
     ui.horizontal(|ui| {
         ui.add(egui::TextEdit::singleline(&mut v.new_name).hint_text(hint).desired_width(260.0));
         ui.add(egui::TextEdit::singleline(&mut v.new_extra).hint_text(extra).desired_width(200.0));
-        if ui.button("+ Добавить").clicked() && !v.new_name.trim().is_empty() {
+        if ui.button(ts("+ Добавить")).clicked() && !v.new_name.trim().is_empty() {
             let name = v.new_name.trim().to_string();
             let extra = v.new_extra.trim().to_string();
             let c = &mut v.book.catalogs;
@@ -1393,7 +1409,7 @@ fn catalogs(v: &mut LedgerView, ui: &mut Ui, p: &Palette) {
                         "" => Vat::None,
                         _ => Vat::R22,
                     };
-                    c.add_item(&name, "шт", vat);
+                    c.add_item(&name, ts("шт"), vat);
                 }
                 CatalogKind::Employees => {
                     c.add_employee(&name, "", Money::parse(&extra).unwrap_or_default());

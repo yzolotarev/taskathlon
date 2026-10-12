@@ -1,0 +1,8 @@
+[package]
+name = "gridcraft-tr"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Taskathlon interface language: Russian source strings with an English table"
+[lints]
+workspace = true
