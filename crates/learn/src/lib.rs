@@ -6,6 +6,7 @@
 
 pub mod check;
 pub mod content;
+pub mod errors;
 pub mod fsrs;
 pub mod profile;
 pub mod quiz;
@@ -137,11 +138,18 @@ impl Task {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Current {
     pub task: Task,
+    /// Preserve assessment/review semantics when resuming a task.
+    #[serde(default)]
+    pub slot: Option<Slot>,
     pub workbook: Workbook,
     pub lesson: Option<Lesson>,
     pub interview: Option<Interview>,
     pub elapsed: f32,
     pub hints: u32,
+    /// Requested task hints, separate from contextual mentor assistance.
+    /// Old saves use the total hint count when this field is absent.
+    #[serde(default)]
+    pub shown_hints: Option<u32>,
     #[serde(default)]
     pub keys: Vec<String>,
     /// The SQL query being written.

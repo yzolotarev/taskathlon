@@ -168,6 +168,8 @@ pub struct Report {
 }
 
 pub struct LearningApp {
+    pub error_encounters: Vec<gridcraft_learn_core::errors::Encounter>,
+    error_practised: Vec<String>,
     pub sheet: SheetApp,
     pub profile: Profile,
     pub screen: Screen,
@@ -233,11 +235,14 @@ impl LearningApp {
         let (profile, current) = save.map(|s| (s.profile, s.current)).unwrap_or_default();
         let mut sheet = SheetApp::new(gridcraft_engine::Session::new(), Services::default());
         sheet.ui.dark = profile.dark;
+        sheet.ui.interface_scale = gridcraft_ui_egui::clamp_interface_scale(profile.interface_scale as f64).unwrap_or(100);
         gridcraft_tr::set_english(profile.english);
         sheet.ui.language = if profile.english { gridcraft_ui_egui::i18n::Language::En } else { gridcraft_ui_egui::i18n::Language::Ru };
         sheet.ui.ribbon_collapsed = true;
         sheet.ui.animations = false;
         let mut app = Self {
+            error_encounters: Vec::new(),
+            error_practised: Vec::new(),
             sheet,
             profile,
             screen: Screen::Home,
@@ -278,14 +283,16 @@ impl LearningApp {
         app.greeting = Some(remind::greeting(&app.profile, now()));
         if let Some(c) = current {
             app.sheet.session = c.session();
+            // Existing saves already keep the current workbook's zoom.
+            app.remember_zoom();
             app.keys = c.keys.clone();
             app.screen = if c.task.mode == Mode::Drill { Screen::Lesson } else { Screen::Case };
-            app.show_hints = c.hints;
+            app.show_hints = c.shown_hints.unwrap_or(c.hints);
             app.active = Some(Active {
                 task: c.task,
                 lesson: c.lesson,
                 interview: c.interview,
-                slot: None,
+                slot: c.slot,
                 started: instant(),
                 before: c.elapsed,
                 hints: c.hints,
@@ -307,15 +314,19 @@ impl LearningApp {
 
     pub fn save(&mut self) -> Result<(), LearnError> {
         self.last_save = instant();
+        self.remember_zoom();
+        self.profile.interface_scale = self.sheet.ui.interface_scale;
         let Some(path) = self.path.clone() else { return Ok(()) };
         let current = match &self.active {
             Some(a) => Some(Current {
                 task: a.task.clone(),
+                slot: a.slot.clone(),
                 workbook: (*self.sheet.session.doc()?.wb).clone(),
                 lesson: a.lesson.clone(),
                 interview: a.interview.clone(),
                 elapsed: a.seconds(),
                 hints: a.hints,
+                shown_hints: Some(self.show_hints),
                 keys: self.keys.clone(),
                 query: a.query.clone(),
             }),
@@ -344,18 +355,27 @@ impl LearningApp {
         self.sheet.ui.ribbon_collapsed = !need;
     }
 
+    fn remember_zoom(&mut self) {
+        if let Some(zoom) = self.sheet.session.active().and_then(|d| d.wb.active().map(|s| s.zoom)) {
+            self.profile.sheet_zoom = zoom.clamp(10, 400);
+        }
+    }
+
     fn load(&mut self, mut task: Task, lesson: Option<Lesson>, interview: Option<Interview>, slot: Option<Slot>) -> Result<(), LearnError> {
         // Mixed and review tasks don't announce the skill: first decide which tool fits.
         let sprint = lesson.as_ref().is_some_and(|l| l.sprint.is_some());
-        if !sprint && task.spec.level >= 3 && matches!(slot, Some(Slot::Mix(_)) | Some(Slot::Review(_))) {
+        if !sprint && !task.spec.skill.starts_with("errors.") && task.spec.level >= 3 && matches!(slot, Some(Slot::Mix(_)) | Some(Slot::Review(_))) {
             task.choices = gridcraft_learn_core::content::recognition(&task.spec).into_iter().collect();
         }
-        let session = task.session()?;
+        self.remember_zoom();
+        let mut session = task.session()?;
+        session.execute("view.zoom", serde_json::json!({"percent": self.profile.sheet_zoom.clamp(10, 400)}))?;
         self.sheet.session = session;
         self.sheet.views.clear();
         self.sheet.editor = None;
         self.keys.clear();
         self.feedback = None;
+        self.error_encounters.clear();
         self.ai_result = None;
         self.show_hints = 0;
         self.active = Some(Active {
@@ -505,6 +525,7 @@ impl LearningApp {
     }
 
     pub fn start_lesson(&mut self, focus: Option<&str>) -> Result<(), LearnError> {
+        self.error_practised.clear();
         let lesson = self.profile.plan_lesson(now(), focus);
         self.streak_extended = false;
         self.screen = Screen::Lesson;
@@ -513,6 +534,18 @@ impl LearningApp {
 
     fn next_in_lesson(&mut self, mut lesson: Lesson) -> Result<(), LearnError> {
         for _ in 0..4 {
+            // Supplementary diagnosis follows the current task; never alter timed assessments.
+            if lesson.sprint.is_none()
+                && lesson.checkpoint.is_none()
+                && !lesson.test_out
+                && !lesson.queue.iter().any(|s| matches!(s, Slot::TestOut(_)))
+                && self.profile.pending_errors.iter().any(|c| !self.error_practised.contains(c))
+            {
+                let code = self.profile.pending_errors.iter().find(|c| !self.error_practised.contains(c)).cloned().unwrap_or_default();
+                self.error_practised.push(code.clone());
+                lesson.queue.push_front(Slot::Focus(gridcraft_learn_core::errors::skill_id(&code)));
+                lesson.total += 1;
+            }
             let Some(slot) = lesson.queue.pop_front() else {
                 self.finish_lesson(lesson);
                 return Ok(());
@@ -643,6 +676,10 @@ impl LearningApp {
         let eval = if a.task.sql.is_some() { sql::evaluate(&a.task, &a.query)? } else { evaluate(&a.task, &self.sheet.session, &self.keys)? };
         self.graded_revision = self.revision();
         let passed = eval.passed();
+        if passed && a.task.spec.skill.starts_with("errors.") {
+            let skill = a.task.spec.skill.clone();
+            self.profile.pending_errors.retain(|code| gridcraft_learn_core::errors::skill_id(code) != skill);
+        }
         if a.lesson.as_ref().is_some_and(|l| l.checkpoint.is_some()) {
             // A skill check grades once and moves on; the staircase is not touched.
             if let Some(a) = self.active.as_mut() {
@@ -922,10 +959,10 @@ impl LearningApp {
     pub fn hint(&mut self) {
         if let Some(a) = self.active.as_mut() {
             let max = a.task.hints.len() as u32;
-            if a.hints < max {
-                a.hints += 1;
+            if self.show_hints < max {
+                self.show_hints += 1;
+                a.hints = a.hints.saturating_add(1);
             }
-            self.show_hints = a.hints;
         }
     }
 
@@ -941,6 +978,31 @@ impl LearningApp {
         self.screen = Screen::Home;
         let r = self.save();
         self.handle(r);
+    }
+
+    /// Explain committed formula errors even before the remaining answers are filled.
+    pub fn observe_errors(&mut self) {
+        if self.screen != Screen::Lesson || self.sheet.editor.is_some() {
+            return;
+        }
+        let Some(a) = self.active.as_ref() else { return };
+        if a.choosing().is_some()
+            || matches!(a.slot, Some(Slot::TestOut(_)))
+            || a.lesson
+                .as_ref()
+                .is_some_and(|l| l.sprint.is_some() || l.checkpoint.is_some() || l.test_out || l.queue.iter().any(|s| matches!(s, Slot::TestOut(_))))
+        {
+            return;
+        }
+        let found = gridcraft_learn_core::errors::discover(&mut self.profile, &a.task, &self.sheet.session);
+        if !found.is_empty() {
+            self.error_encounters.extend(found);
+            if let Some(a) = self.active.as_mut() {
+                a.hints = a.hints.saturating_add(1);
+            }
+            let r = self.save();
+            self.handle(r);
+        }
     }
 
     /// Auto-check: once every answer cell is filled (or an action changed the sheet).
@@ -980,6 +1042,7 @@ impl LearningApp {
 
     pub fn logic(&mut self, ctx: &egui::Context) {
         self.sheet.logic(ctx);
+        self.observe_errors();
         if let Some((seed, rx)) = &self.ai_pending
             && let Ok(result) = rx.try_recv()
         {

@@ -523,7 +523,7 @@ pub fn lesson(app: &mut LearningApp, ui: &mut Ui) {
     let task_secs = a.seconds();
     let slot = a.slot.clone();
     let task = a.task.clone();
-    let hints_used = a.hints;
+    let hints_used = app.show_hints;
     let choosing = a.choosing().is_some();
     let mut quit = false;
     egui::Panel::top("lesson_top").frame(egui::Frame::NONE.fill(p.bg).inner_margin(egui::Margin::symmetric(20, 10))).show(ui, |ui| {
@@ -556,7 +556,7 @@ pub fn lesson(app: &mut LearningApp, ui: &mut Ui) {
     egui::Panel::top("task_card")
         .frame(egui::Frame::NONE.fill(p.bg).inner_margin(egui::Margin { left: 24, right: 24, top: 4, bottom: 12 }).stroke(Stroke::new(1.0, p.border)))
         .show(ui, |ui| {
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
                 let (tag, fg, bg) = match &slot {
                     Some(Slot::Check(_)) => (ts("СРЕЗ"), Color32::WHITE, Color32::from_rgb(20, 160, 170)),
                     Some(Slot::Review(_)) => (ts("ПОВТОРЕНИЕ"), Color32::WHITE, p.blue),
@@ -610,50 +610,41 @@ pub fn lesson(app: &mut LearningApp, ui: &mut Ui) {
             if let Some(ai) = &app.ai_result {
                 ui.label(RichText::new(format!("🤖 {ai}")).color(p.blue_dark));
             }
+            if !app.error_encounters.is_empty() {
+                let mut dismiss = false;
+                egui::Frame::NONE.fill(p.card).corner_radius(10.0).inner_margin(14).show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        mascot(ui, 48.0, Mood::Think, &p);
+                        ui.vertical(|ui| {
+                            ui.set_width(ui.available_width());
+                            for encounter in &app.error_encounters {
+                                ui.label(
+                                    RichText::new(tr(&format!("Смотри: в {} появилась {}", encounter.cell, encounter.code))).strong().color(p.text),
+                                );
+                                ui.label(RichText::new(gridcraft_learn_core::errors::explanation(&encounter.code)).color(p.text));
+                            }
+                            ui.label(RichText::new(ts("Заверши текущую задачу. Следом разберём причину на небольшом упражнении.")).color(p.muted));
+                            dismiss = ui.button(ts("Понятно")).clicked();
+                        });
+                    });
+                });
+                if dismiss {
+                    app.error_encounters.clear();
+                }
+            }
             ui.add_space(4.0);
             if choice_card(app, ui, &p, true) {
                 return;
             }
-            let checkpoint = matches!(slot, Some(Slot::Check(_)));
-            ui.horizontal(|ui| {
-                let can_hint = (hints_used as usize) < task.hints.len() && app.feedback.is_none() && !checkpoint;
-                if ui.add_enabled(can_hint, egui::Button::new(tr(&format!("💡 Подсказка ({}/{})", hints_used, task.hints.len())))).clicked()
-                {
-                    app.hint();
-                }
-                let submit = if checkpoint { ts("✔ Сдать ответ  (Ctrl+Enter)") } else { ts("✔ Проверить  (Ctrl+Enter)") };
-                if ui.add_enabled(app.feedback.is_none(), egui::Button::new(submit)).clicked() {
-                    let r = app.check();
-                    app.handle(r);
-                }
-                if ui.add_enabled(app.feedback.is_none(), egui::Button::new(ts("⏭ Пропустить"))).clicked() {
-                    let r = app.advance();
-                    app.handle(r);
-                }
-                if app.ai_config.is_some() && !checkpoint {
-                    let ok = app.ai_consent && app.ai_pending.is_none() && app.ai_requests < 20;
-                    if ui
-                        .add_enabled(ok, egui::Button::new(ts("🤖 Подсказка AI")))
-                        .on_disabled_hover_text(ts("Включи передачу контекста в настройках"))
-                        .clicked()
-                    {
-                        app.ask_ai();
-                    }
-                }
-                let note = if checkpoint {
-                    ts("Срез: подсказок нет, ответ засчитывается с первой попытки. Верный ответ примется сам.")
-                } else if task.sql.is_some() {
-                    ts("Ctrl+Enter — выполнить запрос; верный результат засчитается сам.")
-                } else {
-                    ts("Ответ проверяется сам, когда заполнишь жёлтые ячейки.")
-                };
-                ui.label(RichText::new(note).size(12.0).color(p.muted));
-            });
         });
     if app.screen != Screen::Lesson {
         return;
     }
-    feedback_banner(app, ui, &p);
+    if app.feedback.is_some() {
+        feedback_banner(app, ui, &p);
+    } else if !app.active.as_ref().is_some_and(|a| a.choosing().is_some()) {
+        lesson_actions(app, ui, &p);
+    }
     if app.screen != Screen::Lesson {
         return;
     }
@@ -752,6 +743,71 @@ fn sql_panel(app: &mut LearningApp, ui: &mut Ui, p: &Palette) {
     }
 }
 
+/// Keep the primary action in the same corner before and after checking.
+fn lesson_actions(app: &mut LearningApp, ui: &mut Ui, p: &Palette) {
+    let Some(a) = app.active.as_ref() else { return };
+    let checkpoint = matches!(a.slot, Some(Slot::Check(_)));
+    let is_sql = a.task.sql.is_some();
+    let hints_used = app.show_hints;
+    let hints_total = a.task.hints.len();
+    let mut check = false;
+    let mut skip = false;
+    let mut hint = false;
+    let mut ai = false;
+    egui::Panel::bottom("lesson_actions")
+        .frame(egui::Frame::NONE.fill(p.bg).stroke(Stroke::new(1.0, p.border)).inner_margin(egui::Margin::symmetric(28, 18)))
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.vertical(|ui| {
+                    // Reserve the right corner for the primary action, even on smaller windows.
+                    ui.set_width((ui.available_width() - 190.0).max(120.0));
+                    let note = if checkpoint {
+                        ts("Срез: ответ засчитывается с первой попытки. Подсказок нет.")
+                    } else if is_sql {
+                        ts("Ctrl+Enter — выполнить запрос; верный результат засчитается сам.")
+                    } else {
+                        ts("Заполни жёлтые ячейки — верный ответ засчитается сам.")
+                    };
+                    ui.label(RichText::new(note).size(12.0).color(p.muted));
+                    ui.horizontal_wrapped(|ui| {
+                        if !checkpoint && hints_total > 0 {
+                            hint = ui
+                                .add_enabled(
+                                    (hints_used as usize) < hints_total,
+                                    egui::Button::new(tr(&format!("💡 Подсказка ({hints_used}/{hints_total})"))),
+                                )
+                                .clicked();
+                        }
+                        skip = ui.button(ts("⏭ Пропустить")).clicked();
+                        if app.ai_config.is_some() && !checkpoint {
+                            let ok = app.ai_consent && app.ai_pending.is_none() && app.ai_requests < 20;
+                            ai = ui
+                                .add_enabled(ok, egui::Button::new(ts("🤖 Подсказка AI")))
+                                .on_disabled_hover_text(ts("Включи передачу контекста в настройках"))
+                                .clicked();
+                        }
+                    });
+                });
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    check = big_button(ui, if checkpoint { ts("СДАТЬ ОТВЕТ") } else { ts("ПРОВЕРИТЬ") }, p.green, vec2(170.0, 52.0))
+                        .on_hover_text("Ctrl+Enter")
+                        .clicked();
+                });
+            });
+        });
+    if check {
+        let r = app.check();
+        app.handle(r);
+    } else if skip {
+        let r = app.advance();
+        app.handle(r);
+    } else if hint {
+        app.hint();
+    } else if ai {
+        app.ask_ai();
+    }
+}
+
 fn feedback_banner(app: &mut LearningApp, ui: &mut Ui, p: &Palette) {
     let Some(fb) = app.feedback.as_ref() else { return };
     let passed = fb.passed;
@@ -765,6 +821,8 @@ fn feedback_banner(app: &mut LearningApp, ui: &mut Ui, p: &Palette) {
             ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, if passed { "✔" } else { "✖" }, FontId::proportional(30.0), fg);
             ui.add_space(8.0);
             ui.vertical(|ui| {
+                let actions_width = if passed { 190.0 } else { 350.0 };
+                ui.set_width((ui.available_width() - actions_width).max(140.0));
                 let title = if fb.corrected {
                     ts("Исправлено!")
                 } else if passed {

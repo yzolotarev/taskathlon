@@ -49,12 +49,18 @@ pub enum Kind {
     },
     Unique {
         col: u32,
+        /// Last column belonging to each record; omitted for older single-column checks.
+        #[serde(default)]
+        last_col: Option<u32>,
         first: u32,
         last: u32,
         expected: usize,
     },
     Keys {
         combo: String,
+    },
+    Today {
+        cell: String,
     },
     /// Label → amount pairs somewhere on the sheet, by any method (pivot, formulas).
     Pairs {
@@ -233,25 +239,36 @@ pub fn evaluate(task: &Task, s: &Session, pressed: &[String]) -> Result<Evaluati
                     Some(ts("Ctrl+1 → Числовой, разделитель групп").into()),
                 )
             }
-            Kind::Unique { col, first, last, expected } => {
+            Kind::Unique { col, last_col, first, last, expected } => {
                 let mut seen = Vec::new();
                 let mut dupes = false;
+                let cols = (*col, last_col.unwrap_or(*col));
+                let mut original = original_rows(task, *first, *last, cols);
+                original.sort();
+                original.dedup();
+                let mut remaining = Vec::new();
                 for r in *first..=*last {
                     let v = at(&wb, r, *col);
-                    if matches!(v, Value::Empty) {
+                    let record: Vec<_> = (cols.0..=cols.1).map(|c| at(&wb, r, c)).collect();
+                    if record.iter().all(|v| matches!(v, Value::Empty)) {
                         continue;
                     }
+                    remaining.push(record.iter().map(show).collect::<Vec<_>>().join("|"));
                     let k = show(&v);
                     if seen.contains(&k) {
                         dupes = true;
                     }
                     seen.push(k);
                 }
-                let ok = !dupes && seen.len() == *expected;
+                remaining.sort();
+                let intact = remaining == original;
+                let ok = !dupes && seen.len() == *expected && intact;
                 (
                     ok,
                     if ok {
                         ts("Дубликаты удалены").into()
+                    } else if !intact {
+                        ts("Сохрани все уникальные исходные строки целиком: названия и связанные с ними данные").into()
                     } else {
                         tr(&format!("Должно остаться {expected} уникальных строк"))
                     },
@@ -261,6 +278,20 @@ pub fn evaluate(task: &Task, s: &Session, pressed: &[String]) -> Result<Evaluati
             Kind::Keys { combo } => {
                 let ok = pressed.iter().any(|p| p == combo);
                 (ok, if ok { tr(&format!("{combo} — есть!")) } else { tr(&format!("Сделай это клавишами {combo}")) }, Some(combo.clone()))
+            }
+            Kind::Today { cell } => {
+                let actual = sheet::value(s, cell)?;
+                let today = Value::number(gridcraft_engine::calc::now_serial().floor());
+                let ok = equivalent(&actual, &today);
+                (
+                    ok,
+                    if ok {
+                        ts("Сегодняшняя дата введена").into()
+                    } else {
+                        tr(&format!("Введи сегодняшнюю дату в {cell}"))
+                    },
+                    Some("Ctrl+; → Enter".into()),
+                )
             }
             Kind::Pairs { pairs } => pairs_check(task, &wb, pairs)?,
             Kind::Amount { cell, expected, either_sign } => {

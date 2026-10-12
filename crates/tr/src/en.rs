@@ -2606,4 +2606,124 @@ pub static PAIRS: &[(&str, &str)] = &[
         "For each captain — how many passenger seats they carried in total (sum of capacity on passenger flights).",
     ),
     ("Задача с собеседования", "Interview task"),
+    // Error mentor, repair practice and lesson actions.
+    (
+        "Имя не распознано. Проверь название функции или диапазона; текст в формуле заключай в кавычки. Это также может быть функция, которую движок пока не поддерживает.",
+        "Name not recognized. Check the function or range name; put text in quotation marks. The engine may also not support this function yet.",
+    ),
+    (
+        "Делитель равен нулю или ссылается на пустую ячейку. Проверь данные и реши, что означает отсутствие делителя; не подменяй результат нулём автоматически.",
+        "The divisor is zero or refers to an empty cell. Check the data and decide what a missing divisor means; do not automatically replace the result with zero.",
+    ),
+    (
+        "Операция получила неподходящий тип данных, например текст вместо числа. Проверь значения и аргументы функции.",
+        "The operation received the wrong data type, such as text instead of a number. Check the values and function arguments.",
+    ),
+    (
+        "Ссылка недействительна, например после удаления ячеек. Найди повреждённую ссылку и восстанови её по смыслу расчёта.",
+        "A reference is invalid, for example after deleting cells. Find the broken reference and restore it according to the intended calculation.",
+    ),
+    (
+        "Числовой аргумент или результат недопустим: например корень из отрицательного числа. Проверь область допустимых значений.",
+        "A numeric argument or result is invalid, such as the square root of a negative number. Check the allowed values.",
+    ),
+    (
+        "Искомое значение не найдено. Проверь ключ и диапазон поиска. Отсутствие записи может быть нормальным результатом; обработай его явно.",
+        "The lookup value was not found. Check the key and lookup range. A missing record may be a valid outcome; handle it explicitly.",
+    ),
+    (
+        "Указанные диапазоны не пересекаются. Пробел между ссылками означает пересечение, поэтому проверь разделители и нужный диапазон.",
+        "The specified ranges do not intersect. A space between references means intersection, so check the separators and intended range.",
+    ),
+    (
+        "Результату массива не хватает свободных ячеек. Проверь область вывода и препятствия, прежде чем менять формулу.",
+        "There are not enough free cells for the array result. Check the output area and obstructions before changing the formula.",
+    ),
+    (
+        "Движок не смог получить допустимый результат массива, например фильтр не нашёл строк. Проверь условия и обработку пустого результата.",
+        "The engine could not produce a valid array result, for example because a filter found no rows. Check the conditions and how empty results are handled.",
+    ),
+    (
+        "Формула прямо или через другие ячейки ссылается на себя. Проследи цепочку ссылок и разорви цикл.",
+        "The formula refers to itself directly or through other cells. Trace the references and break the cycle.",
+    ),
+    (
+        "Данные ещё загружаются. Дождись завершения и проверь источник; временное ожидание не всегда означает неверную формулу.",
+        "Data is still loading. Wait for it to finish and check the source; a temporary wait does not always mean the formula is wrong.",
+    ),
+    ("Проверь формулу и её исходные данные.", "Check the formula and its source data."),
+    ("Неизвестная ошибка для тренировки", "Unknown error for practice"),
+    (
+        "В примере опечатка в имени функции. В B4 посчитай сумму B1 и B2 правильной функцией.",
+        "The example has a typo in the function name. In B4, add B1 and B2 using the correct function.",
+    ),
+    (
+        "В примере делят на ноль. По условию делитель — число в B2. В B4 запиши правильное деление.",
+        "The example divides by zero. The required divisor is the number in B2. Enter the correct division in B4.",
+    ),
+    (
+        "В примере складывают число и текст. По условию нужны два числа B1 и B2. Исправь расчёт в B4.",
+        "The example adds a number and text. You need the two numbers in B1 and B2. Fix the calculation in B4.",
+    ),
+    (
+        "После удаления данных потерялась ссылка на второе слагаемое. Оно теперь в B2. Восстанови сумму в B4.",
+        "Deleting data broke the reference to the second number. It is now in B2. Restore the sum in B4.",
+    ),
+    (
+        "Нужен корень из положительного B1. В примере лишний минус. Исправь формулу в B4.",
+        "You need the square root of positive B1. The example has an unnecessary minus sign. Fix the formula in B4.",
+    ),
+    (
+        "Ключ -1 отсутствует. По условию ищем число из B2 в B1:B2. В B4 найди его позицию точным поиском.",
+        "The key -1 is missing. You need to find the number from B2 in B1:B2. Use an exact match to find its position in B4.",
+    ),
+    (
+        "В примере пробел означает пересечение непересекающихся ячеек. Нужна сумма диапазона B1:B2. Запиши её в B4.",
+        "The example uses a space to intersect cells that do not overlap. You need the sum of B1:B2. Enter it in B4.",
+    ),
+    (
+        "Для B4 ссылка на B4 создаёт цикл. По условию складываем исходные B1 и B2. Запиши расчёт без цикла.",
+        "Referring to B4 from B4 creates a cycle. You need to add the original B1 and B2. Enter the calculation without a cycle.",
+    ),
+    (
+        "Массив из двух строк не помещается: под ним занята ячейка. Здесь нужен один итог — сумма B1:B2. В B4 запиши формулу с одним результатом.",
+        "The two-row array cannot fit because the cell below is occupied. You need a single total: the sum of B1:B2. Enter a formula with one result in B4.",
+    ),
+    (
+        "Фильтр отрицательных чисел может вернуть пустой массив. В B4 проверь число отрицательных значений: если их нет, верни текст «Нет записей», иначе «Есть записи».",
+        "Filtering negative numbers may return an empty array. In B4, check how many values are negative: return the text “Нет записей” if there are none, otherwise “Есть записи”.",
+    ),
+    (
+        "Источник завершил загрузку: числовые данные уже в B1 и B2. В B4 посчитай итог. При ожидании загрузки формулу переписывать не требуется.",
+        "The source has finished loading: the numbers are already in B1 and B2. Calculate the total in B4. You do not need to rewrite a formula while waiting for data.",
+    ),
+    ("Первое число", "First number"),
+    ("Второе число", "Second number"),
+    ("Пример причины", "Example cause"),
+    ("Твой расчёт", "Your calculation"),
+    ("Разбираем {}", "Understanding {}"),
+    ("Исправленный расчёт", "Corrected calculation"),
+    ("Что сначала проверить при {}?", "What should you check first for {}?"),
+    ("Сначала найди причину, затем исправь расчёт по условию.", "First find the cause, then fix the calculation as requested."),
+    ("Скрыть любую ошибку и всегда вернуть ноль", "Hide every error and always return zero"),
+    (
+        "Ноль может исказить результат. Сначала установи причину и реши, как обрабатывать её по условию.",
+        "Zero may distort the result. First identify the cause and decide how to handle it for this task.",
+    ),
+    ("Смотри: в {} появилась {}", "Look: {} now shows {}"),
+    (
+        "Заверши текущую задачу. Следом разберём причину на небольшом упражнении.",
+        "Finish this task. Next, we will explore the cause in a short exercise.",
+    ),
+    ("Понятно", "Got it"),
+    (
+        "Сохрани все уникальные исходные строки целиком: названия и связанные с ними данные",
+        "Keep every original unique row intact, including names and their related data",
+    ),
+    ("Сегодняшняя дата введена", "Today's date entered"),
+    ("Введи сегодняшнюю дату в {}", "Enter today's date in {}"),
+    ("Срез: ответ засчитывается с первой попытки. Подсказок нет.", "Skill check: your first attempt counts. No hints."),
+    ("Заполни жёлтые ячейки — верный ответ засчитается сам.", "Fill the yellow cells; a correct answer is accepted automatically."),
+    ("СДАТЬ ОТВЕТ", "SUBMIT ANSWER"),
+    ("ПРОВЕРИТЬ", "CHECK"),
 ];

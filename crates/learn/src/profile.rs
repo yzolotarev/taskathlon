@@ -112,6 +112,10 @@ pub struct InterviewResult {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Profile {
+    /// First encounters persist across exercises and restarts.
+    pub seen_errors: Vec<String>,
+    /// Error literacy tasks waiting for the next ordinary lesson slot.
+    pub pending_errors: Vec<String>,
     pub xp: u32,
     /// Local day number → XP earned that day.
     pub days: BTreeMap<u64, u32>,
@@ -129,6 +133,10 @@ pub struct Profile {
     pub next_seed: u64,
     pub sound: bool,
     pub dark: bool,
+    /// Preferred spreadsheet magnification, reused for new exercises.
+    pub sheet_zoom: u16,
+    /// Preferred size of the whole interface.
+    pub interface_scale: u16,
     /// English interface instead of Russian.
     #[serde(default)]
     pub english: bool,
@@ -287,6 +295,8 @@ pub enum Speed {
 impl Default for Profile {
     fn default() -> Self {
         Self {
+            seen_errors: Vec::new(),
+            pending_errors: Vec::new(),
             xp: 0,
             days: BTreeMap::new(),
             streak: 0,
@@ -301,6 +311,8 @@ impl Default for Profile {
             next_seed: 1,
             sound: true,
             dark: false,
+            sheet_zoom: 100,
+            interface_scale: 100,
             english: false,
             checkpoints: Vec::new(),
             pending_transfer: None,
@@ -364,6 +376,9 @@ pub enum Slot {
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Lesson {
+    /// The entire skip-ahead assessment, including its final task.
+    #[serde(default)]
+    pub test_out: bool,
     pub queue: VecDeque<Slot>,
     pub total: usize,
     pub done: usize,
@@ -465,6 +480,14 @@ impl Profile {
     pub fn plan_lesson(&mut self, now: u64, focus: Option<&str>) -> Lesson {
         let len = 8usize;
         let mut queue = VecDeque::new();
+        // Error repair skills use the same FSRS cards, with separate discovery so they
+        // need not appear as a new curriculum unit or unlock prerequisites.
+        let mut error_reviews: Vec<_> =
+            self.skills.iter().filter(|(id, progress)| id.starts_with("errors.") && progress.card.reps > 0 && progress.card.due <= now).collect();
+        error_reviews.sort_by_key(|(_, progress)| progress.card.due);
+        for (id, _) in error_reviews.into_iter().take(2) {
+            queue.push_back(Slot::Review(id.clone()));
+        }
         let remedy: Vec<String> = self.remediation.drain(..).take(2).collect();
         for r in &remedy {
             queue.push_back(Slot::Retry(r.clone()));
@@ -882,7 +905,7 @@ impl Profile {
     pub fn plan_testout(&self, unit: usize) -> Lesson {
         let queue: VecDeque<Slot> =
             SKILLS.iter().filter(|s| s.unit == unit && self.level(s.id) < 3).take(8).map(|s| Slot::TestOut(s.id.into())).collect();
-        Lesson { total: queue.len(), queue, retries: 3, ..Lesson::default() }
+        Lesson { total: queue.len(), queue, retries: 3, test_out: true, ..Lesson::default() }
     }
 
     /// Records a drill answer: the first evaluation of a task decides the grade.

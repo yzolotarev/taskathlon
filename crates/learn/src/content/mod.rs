@@ -424,6 +424,9 @@ pub fn skill(id: &str) -> Option<&'static Skill> {
 }
 
 pub fn build(spec: &Spec) -> Result<Task> {
+    if spec.skill.starts_with("errors.") {
+        return crate::errors::build(spec);
+    }
     if let Some(case) = CASES.iter().find(|c| c.id == spec.skill) {
         let mut g = Gen::new(spec);
         return (case.build)(&mut g);

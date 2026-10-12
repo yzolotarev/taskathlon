@@ -195,3 +195,138 @@ fn every_screen_renders() {
     h.state_mut().show_settings = true;
     h.run_steps(3);
 }
+
+#[test]
+fn personalized_zoom_survives_exercises_and_restart_without_an_open_task() {
+    let dir = std::env::temp_dir().join(format!("taskathlon-zoom-test-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("progress.json");
+    let _ = std::fs::remove_file(&path);
+    let mut app = LearningApp::new(Some(path.clone())).unwrap();
+    app.start_lesson(None).unwrap();
+    app.sheet.session.run("view.zoom", json!({"percent": 160})).unwrap();
+    app.sheet.ui.interface_scale = 125;
+    // Moving on before autosave must still carry the user's current selection.
+    solve(&mut app);
+    app.check().unwrap();
+    app.advance().unwrap();
+    assert_eq!(app.sheet.session.active().unwrap().wb.active().unwrap().zoom, 160);
+    app.save().unwrap();
+    let mut resumed = LearningApp::new(Some(path.clone())).unwrap();
+    assert_eq!(resumed.sheet.session.active().unwrap().wb.active().unwrap().zoom, 160);
+    assert_eq!(resumed.sheet.ui.interface_scale, 125);
+    // Finishing/leaving the worksheet must retain the preference separately from its data.
+    resumed.active = None;
+    resumed.save().unwrap();
+    let mut back = LearningApp::new(Some(path)).unwrap();
+    assert!(back.active.is_none());
+    back.start_lesson(None).unwrap();
+    assert_eq!(back.sheet.session.active().unwrap().wb.active().unwrap().zoom, 160);
+    assert_eq!(back.sheet.ui.interface_scale, 125);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn legacy_profiles_get_default_zoom_without_resetting_progress() {
+    let profile: Profile = serde_json::from_value(json!({"xp": 321})).unwrap();
+    assert_eq!(profile.xp, 321);
+    assert_eq!(profile.sheet_zoom, 100);
+    assert_eq!(profile.interface_scale, 100);
+}
+
+#[test]
+fn formula_error_explains_once_and_practice_survives_skipping() {
+    let mut app = LearningApp::new(None).unwrap();
+    app.start_lesson(Some("fn.sum")).unwrap();
+    let cell = app.active.as_ref().unwrap().task.answer_cells()[0].clone();
+    gridcraft_learn_core::sheet::set(&mut app.sheet.session, &cell, &Cell::Formula("=NO_SUCH_FUNCTION(1)".into())).unwrap();
+    app.observe_errors();
+    assert_eq!(app.error_encounters.len(), 1);
+    assert_eq!(app.profile.pending_errors, vec!["#NAME?"]);
+    app.observe_errors();
+    assert_eq!(app.error_encounters.len(), 1);
+    assert_eq!(app.active.as_ref().unwrap().hints, 1);
+    assert_eq!(app.show_hints, 0);
+    app.hint();
+    assert_eq!(app.show_hints, 1);
+    assert_eq!(app.active.as_ref().unwrap().hints, 2);
+    app.advance().unwrap();
+    assert!(app.active.as_ref().unwrap().task.spec.skill.starts_with("errors."));
+    assert_eq!(app.profile.pending_errors, vec!["#NAME?"]);
+    app.advance().unwrap();
+    assert_eq!(app.profile.pending_errors, vec!["#NAME?"]);
+    app.quit_to_home();
+    app.start_lesson(Some("fn.sum")).unwrap();
+    assert!(app.active.as_ref().unwrap().task.spec.skill.starts_with("errors."));
+    solve(&mut app);
+    app.check().unwrap();
+    assert!(app.profile.pending_errors.is_empty());
+}
+
+#[test]
+fn testout_keeps_pending_error_practice_out_until_assessment_finishes() {
+    let mut app = LearningApp::new(None).unwrap();
+    app.profile.pending_errors.push("#NAME?".into());
+    app.start_testout(0).unwrap();
+    let tasks = app.active.as_ref().unwrap().lesson.as_ref().unwrap().total;
+    for _ in 0..tasks {
+        assert!(matches!(app.active.as_ref().unwrap().slot, Some(Slot::TestOut(_))));
+        solve(&mut app);
+        app.check().unwrap();
+        app.advance().unwrap();
+    }
+    assert_eq!(app.screen, Screen::Done);
+    assert_eq!(app.profile.pending_errors, vec!["#NAME?"]);
+}
+
+#[test]
+fn restarted_final_testout_preserves_slot_and_suppresses_error_help() {
+    let path = std::env::temp_dir().join(format!("gridcraft-final-assessment-{}.json", std::process::id()));
+    let _ = std::fs::remove_file(&path);
+    let mut app = LearningApp::new(Some(path.clone())).unwrap();
+    app.start_testout(0).unwrap();
+    app.active.as_mut().unwrap().lesson.as_mut().unwrap().queue.clear();
+    let slot = app.active.as_ref().unwrap().slot.clone();
+    app.save().unwrap();
+    let mut resumed = LearningApp::new(Some(path.clone())).unwrap();
+    assert_eq!(resumed.active.as_ref().unwrap().slot, slot);
+    assert!(resumed.active.as_ref().unwrap().lesson.as_ref().unwrap().test_out);
+    let cell = resumed.active.as_ref().unwrap().task.answer_cells()[0].clone();
+    gridcraft_learn_core::sheet::set(&mut resumed.sheet.session, &cell, &Cell::Formula("=NO_SUCH_FUNCTION(1)".into())).unwrap();
+    resumed.observe_errors();
+    assert!(resumed.error_encounters.is_empty());
+    assert!(resumed.profile.seen_errors.is_empty());
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn later_error_reviews_keep_the_diagnosis_question() {
+    let mut app = LearningApp::new(None).unwrap();
+    let skill = gridcraft_learn_core::errors::skill_id("#NAME?");
+    let task = Task::generate(&Spec::new(&skill, 3, 5)).unwrap();
+    app.load(task, None, None, Some(Slot::Review(skill))).unwrap();
+    assert!(app.active.as_ref().unwrap().choosing().is_some());
+}
+
+#[test]
+fn mentor_assistance_does_not_reveal_task_hints_after_restart() {
+    let path = std::env::temp_dir().join(format!("gridcraft-mentor-hints-{}.json", std::process::id()));
+    let _ = std::fs::remove_file(&path);
+    let mut app = LearningApp::new(Some(path.clone())).unwrap();
+    app.start_lesson(Some("fn.sum")).unwrap();
+    let cell = app.active.as_ref().unwrap().task.answer_cells()[0].clone();
+    gridcraft_learn_core::sheet::set(&mut app.sheet.session, &cell, &Cell::Formula("=NO_SUCH_FUNCTION(1)".into())).unwrap();
+    app.observe_errors();
+    app.save().unwrap();
+    let mut resumed = LearningApp::new(Some(path.clone())).unwrap();
+    assert_eq!(resumed.show_hints, 0);
+    assert_eq!(resumed.active.as_ref().unwrap().hints, 1);
+    resumed.hint();
+    assert_eq!(resumed.show_hints, 1);
+    assert_eq!(resumed.active.as_ref().unwrap().hints, 2);
+    resumed.save().unwrap();
+    let back = LearningApp::new(Some(path.clone())).unwrap();
+    assert_eq!(back.show_hints, 1);
+    assert_eq!(back.active.as_ref().unwrap().hints, 2);
+    let _ = std::fs::remove_file(path);
+}

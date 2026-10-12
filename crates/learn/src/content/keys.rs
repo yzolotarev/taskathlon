@@ -147,6 +147,7 @@ pub fn today(g: &mut Gen) -> Result<Task> {
     let cell = t.cell(1, t.last);
     g.setup.answer(cell.clone());
     key(g, "Ctrl+;");
+    g.check(&cell, Kind::Today { cell: cell.clone() });
     let mut task = g.task(ts("Ctrl+; — сегодня"), tr(&format!("Последний акт пришёл сегодня. Встань в {cell}, нажми Ctrl+; и Enter.")), None, cell);
     task.goal_seconds = 6.0;
     Ok(task)
