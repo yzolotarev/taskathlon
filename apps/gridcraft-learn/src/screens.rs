@@ -192,7 +192,9 @@ fn side_column(app: &mut LearningApp, ui: &mut Ui, p: &Palette, t: u64, frontier
                 ui.label(RichText::new(tr(&format!("Рекорд: {}", clock(best)))).size(12.0).color(p.muted));
             }
         } else {
-            ui.label(RichText::new(ts("Откроется, когда освоишь первые навыки (уровень 2).")).size(12.0).color(p.muted));
+            ui.label(
+                RichText::new(ts("Откроется после трёх правильных ответов подряд без подсказок на уровне 2 или выше.")).size(12.0).color(p.muted),
+            );
         }
     });
     card(ui, p, None, |ui| {
@@ -520,10 +522,8 @@ pub fn lesson(app: &mut LearningApp, ui: &mut Ui) {
     let (done, total, combo) = a.lesson.as_ref().map(|l| (l.done, l.total, l.combo)).unwrap_or((0, 1, 0));
     let sprint = a.lesson.as_ref().and_then(|l| l.sprint.clone());
     let misses = a.lesson.as_ref().map(|l| l.misses).unwrap_or(0);
-    let task_secs = a.seconds();
     let slot = a.slot.clone();
     let task = a.task.clone();
-    let hints_used = a.hints;
     let choosing = a.choosing().is_some();
     let mut quit = false;
     egui::Panel::top("lesson_top").frame(egui::Frame::NONE.fill(p.bg).inner_margin(egui::Margin::symmetric(20, 10))).show(ui, |ui| {
@@ -556,7 +556,9 @@ pub fn lesson(app: &mut LearningApp, ui: &mut Ui) {
     egui::Panel::top("task_card")
         .frame(egui::Frame::NONE.fill(p.bg).inner_margin(egui::Margin { left: 24, right: 24, top: 4, bottom: 12 }).stroke(Stroke::new(1.0, p.border)))
         .show(ui, |ui| {
-            ui.horizontal(|ui| {
+            ui.label(RichText::new(&task.prompt).size(20.0).color(p.text));
+            ui.add_space(6.0);
+            ui.horizontal_wrapped(|ui| {
                 let (tag, fg, bg) = match &slot {
                     Some(Slot::Check(_)) => (ts("СРЕЗ"), Color32::WHITE, Color32::from_rgb(20, 160, 170)),
                     Some(Slot::Review(_)) => (ts("ПОВТОРЕНИЕ"), Color32::WHITE, p.blue),
@@ -568,31 +570,17 @@ pub fn lesson(app: &mut LearningApp, ui: &mut Ui) {
                     _ => (ts("ТРЕНИРОВКА"), Color32::WHITE, p.green_dark),
                 };
                 chip(ui, tag, fg, bg);
-                // A skill check and an open method question don't give the tool away.
-                if !choosing && !matches!(slot, Some(Slot::Check(_))) {
-                    chip(ui, &task.skill_name(), p.text, p.card);
-                }
-                chip(ui, &tr(&format!("Уровень {}: {}", task.spec.level, level_name(task.spec.level))), p.muted, p.card);
                 if !task.keys().is_empty() {
-                    chip(ui, &format!("⌨ {}", task.keys().join(", ")), p.text, Color32::from_rgb(255, 236, 179));
+                    ui.label(RichText::new(format!("⌨ {}", task.keys().join(", "))).size(13.0).color(p.muted));
                 }
-                if sprint.is_none() && app.feedback.is_none() {
-                    // A quiet stopwatch: under 40 % of the target time is a lightning answer.
-                    let goal = task.goal_seconds;
-                    let c = if task_secs <= goal * 0.4 {
-                        p.gold
-                    } else if task_secs <= goal * 0.7 {
-                        p.green
-                    } else {
-                        p.muted
-                    };
-                    let mark = if task_secs <= goal * 0.4 { "⚡" } else { "⏱" };
-                    chip(ui, &tr(&format!("{mark} {:.0} / {:.0} с", task_secs, goal)), c, p.card);
-                    ui.ctx().request_repaint_after(std::time::Duration::from_millis(250));
-                }
+                ui.collapsing(ts("О задании"), |ui| {
+                    if !choosing && !matches!(slot, Some(Slot::Check(_))) {
+                        ui.label(task.skill_name());
+                    }
+                    ui.label(tr(&format!("Уровень {}: {}", task.spec.level, level_name(task.spec.level))));
+                });
             });
-            ui.add_space(6.0);
-            ui.label(RichText::new(&task.prompt).size(20.0).color(p.text));
+
             if let Some(ex) = &task.example {
                 ui.add_space(6.0);
                 egui::Frame::NONE
@@ -604,62 +592,28 @@ pub fn lesson(app: &mut LearningApp, ui: &mut Ui) {
                         ui.label(RichText::new(ex).font(FontId::monospace(22.0)).color(p.blue_dark));
                     });
             }
-            for (i, h) in task.hints.iter().take(hints_used as usize).enumerate() {
-                ui.label(RichText::new(format!("💡 {}. {h}", i + 1)).size(15.0).color(p.orange));
-            }
-            if let Some(ai) = &app.ai_result {
-                ui.label(RichText::new(format!("🤖 {ai}")).color(p.blue_dark));
-            }
             ui.add_space(4.0);
             if choice_card(app, ui, &p, true) {
                 return;
             }
-            let checkpoint = matches!(slot, Some(Slot::Check(_)));
-            ui.horizontal(|ui| {
-                let can_hint = (hints_used as usize) < task.hints.len() && app.feedback.is_none() && !checkpoint;
-                if ui.add_enabled(can_hint, egui::Button::new(tr(&format!("💡 Подсказка ({}/{})", hints_used, task.hints.len())))).clicked()
-                {
-                    app.hint();
-                }
-                let submit = if checkpoint { ts("✔ Сдать ответ  (Ctrl+Enter)") } else { ts("✔ Проверить  (Ctrl+Enter)") };
-                if ui.add_enabled(app.feedback.is_none(), egui::Button::new(submit)).clicked() {
-                    let r = app.check();
-                    app.handle(r);
-                }
-                if ui.add_enabled(app.feedback.is_none(), egui::Button::new(ts("⏭ Пропустить"))).clicked() {
-                    let r = app.advance();
-                    app.handle(r);
-                }
-                if app.ai_config.is_some() && !checkpoint {
-                    let ok = app.ai_consent && app.ai_pending.is_none() && app.ai_requests < 20;
-                    if ui
-                        .add_enabled(ok, egui::Button::new(ts("🤖 Подсказка AI")))
-                        .on_disabled_hover_text(ts("Включи передачу контекста в настройках"))
-                        .clicked()
-                    {
-                        app.ask_ai();
-                    }
-                }
-                let note = if checkpoint {
-                    ts("Срез: подсказок нет, ответ засчитывается с первой попытки. Верный ответ примется сам.")
-                } else if task.sql.is_some() {
-                    ts("Ctrl+Enter — выполнить запрос; верный результат засчитается сам.")
-                } else {
-                    ts("Ответ проверяется сам, когда заполнишь жёлтые ячейки.")
-                };
-                ui.label(RichText::new(note).size(12.0).color(p.muted));
-            });
         });
     if app.screen != Screen::Lesson {
         return;
     }
-    feedback_banner(app, ui, &p);
+    if app.feedback.is_some() {
+        feedback_banner(app, ui, &p);
+    } else if !app.active.as_ref().is_some_and(|a| a.choosing().is_some()) {
+        lesson_actions(app, ui, &p);
+    }
     if app.screen != Screen::Lesson {
         return;
     }
     if app.active.as_ref().is_some_and(|a| a.choosing().is_some()) {
         // The sheet appears after the choice, so typing 1–4 never lands in a cell.
         return;
+    }
+    if app.feedback.is_none() {
+        lesson_help(app, ui, &p);
     }
     if task.sql.is_some() {
         sql_panel(app, ui, &p);
@@ -686,6 +640,58 @@ fn sql_values(ui: &mut Ui, p: &Palette, id: &str, header: &[String], rows: &[Vec
             ui.end_row();
         }
     });
+}
+
+/// One current hint; history and long explanations scroll inside a reserved area.
+fn lesson_help(app: &mut LearningApp, ui: &mut Ui, p: &Palette) {
+    let Some(a) = app.active.as_ref() else { return };
+    if a.lesson.as_ref().is_some_and(|l| l.sprint.is_some() || l.checkpoint.is_some() || l.test_out) {
+        return;
+    }
+    let hints = a.task.hints.clone();
+    let shown = app.show_hints as usize;
+    let mut dismiss = false;
+    egui::Panel::bottom("lesson_help").exact_size(96.0).frame(egui::Frame::NONE.fill(p.card).inner_margin(egui::Margin::symmetric(24, 8))).show(
+        ui,
+        |ui| {
+            egui::ScrollArea::vertical().id_salt("lesson_help_scroll").auto_shrink([false, false]).show(ui, |ui| {
+                if let Some(encounter) = app.error_encounters.last() {
+                    ui.horizontal(|ui| {
+                        mascot(ui, 32.0, Mood::Think, p);
+                        ui.label(RichText::new(tr(&format!("В {} появилась {}", encounter.cell, encounter.code))).strong().color(p.text));
+                        dismiss = ui.small_button(ts("Понятно")).clicked();
+                    });
+                    ui.label(gridcraft_learn_core::errors::short_explanation(&encounter.code));
+                    ui.collapsing(ts("Подробнее"), |ui| {
+                        for encounter in &app.error_encounters {
+                            ui.label(tr(&format!("{}: {}", encounter.cell, encounter.code)));
+                            ui.label(gridcraft_learn_core::errors::explanation(&encounter.code));
+                        }
+                        ui.label(ts("Заверши текущую задачу. Следом разберём причину на небольшом упражнении."));
+                    });
+                } else if let Some(hint) = shown.checked_sub(1).and_then(|i| hints.get(i)) {
+                    ui.label(RichText::new(format!("💡 {hint}")).color(p.text));
+                } else if let Some(ai) = &app.ai_result {
+                    ui.label(ai);
+                } else {
+                    ui.label(RichText::new(ts("Работай в таблице. Если нужна помощь — открой подсказку внизу.")).color(p.muted));
+                }
+                if shown > 0 || app.ai_result.is_some() {
+                    ui.collapsing(ts("История подсказок"), |ui| {
+                        for (i, h) in hints.iter().take(shown).enumerate() {
+                            ui.label(format!("{}. {h}", i + 1));
+                        }
+                        if let Some(ai) = &app.ai_result {
+                            ui.label(ai);
+                        }
+                    });
+                }
+            });
+        },
+    );
+    if dismiss {
+        app.error_encounters.clear();
+    }
 }
 
 /// SQL drills: the tables on the left, the editor and the result on the right.
@@ -752,9 +758,75 @@ fn sql_panel(app: &mut LearningApp, ui: &mut Ui, p: &Palette) {
     }
 }
 
+/// Keep the primary action in the same corner before and after checking.
+fn lesson_actions(app: &mut LearningApp, ui: &mut Ui, p: &Palette) {
+    let Some(a) = app.active.as_ref() else { return };
+    let checkpoint = matches!(a.slot, Some(Slot::Check(_)));
+    let is_sql = a.task.sql.is_some();
+    let hints_used = app.show_hints;
+    let hints_total = a.task.hints.len();
+    let mut check = false;
+    let mut skip = false;
+    let mut hint = false;
+    let mut ai = false;
+    egui::Panel::bottom("lesson_actions")
+        .frame(egui::Frame::NONE.fill(p.bg).stroke(Stroke::new(1.0, p.border)).inner_margin(egui::Margin::symmetric(28, 18)))
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.vertical(|ui| {
+                    // Reserve the right corner for the primary action, even on smaller windows.
+                    ui.set_width((ui.available_width() - 190.0).max(120.0));
+                    let note = if checkpoint {
+                        ts("Срез: ответ засчитывается с первой попытки. Подсказок нет.")
+                    } else if is_sql {
+                        ts("Ctrl+Enter — выполнить запрос; верный результат засчитается сам.")
+                    } else {
+                        ts("Заполни жёлтые ячейки — верный ответ засчитается сам.")
+                    };
+                    ui.label(RichText::new(note).size(12.0).color(p.muted));
+                    ui.horizontal_wrapped(|ui| {
+                        if !checkpoint && hints_total > 0 {
+                            hint = ui
+                                .add_enabled(
+                                    (hints_used as usize) < hints_total,
+                                    egui::Button::new(tr(&format!("💡 Подсказка ({hints_used}/{hints_total})"))),
+                                )
+                                .clicked();
+                        }
+                        skip = ui.button(ts("⏭ Пропустить")).clicked();
+                        if app.ai_config.is_some() && !checkpoint {
+                            let ok = app.ai_consent && app.ai_pending.is_none() && app.ai_requests < 20;
+                            ai = ui
+                                .add_enabled(ok, egui::Button::new(ts("🤖 Подсказка AI")))
+                                .on_disabled_hover_text(ts("Включи передачу контекста в настройках"))
+                                .clicked();
+                        }
+                    });
+                });
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    check = big_button(ui, if checkpoint { ts("СДАТЬ ОТВЕТ") } else { ts("ПРОВЕРИТЬ") }, p.green, vec2(170.0, 52.0))
+                        .on_hover_text("Ctrl+Enter")
+                        .clicked();
+                });
+            });
+        });
+    if check {
+        let r = app.check();
+        app.handle(r);
+    } else if skip {
+        let r = app.advance();
+        app.handle(r);
+    } else if hint {
+        app.hint();
+    } else if ai {
+        app.ask_ai();
+    }
+}
+
 fn feedback_banner(app: &mut LearningApp, ui: &mut Ui, p: &Palette) {
     let Some(fb) = app.feedback.as_ref() else { return };
     let passed = fb.passed;
+    let can_fix = app.feedback_can_fix();
     let (bg, fg) = if passed { (p.green_soft, p.green_dark) } else { (p.red_soft, p.red_dark) };
     let mut next = false;
     let mut fix = false;
@@ -765,6 +837,8 @@ fn feedback_banner(app: &mut LearningApp, ui: &mut Ui, p: &Palette) {
             ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, if passed { "✔" } else { "✖" }, FontId::proportional(30.0), fg);
             ui.add_space(8.0);
             ui.vertical(|ui| {
+                let actions_width = if passed { 190.0 } else { 350.0 };
+                ui.set_width((ui.available_width() - actions_width).max(140.0));
                 let title = if fb.corrected {
                     ts("Исправлено!")
                 } else if passed {
@@ -776,13 +850,6 @@ fn feedback_banner(app: &mut LearningApp, ui: &mut Ui, p: &Palette) {
                 if passed {
                     let ch = &fb.change;
                     let mut line = if fb.xp > 0 { format!("+{} XP", fb.xp) } else { String::new() };
-                    if ch.speed_bonus > 0 {
-                        line.push_str(&tr(&format!("  (⚡ скорость +{}", ch.speed_bonus)));
-                        line.push_str(if ch.combo_bonus > 0 { "" } else { ")" });
-                    }
-                    if ch.combo_bonus > 0 {
-                        line.push_str(&tr(&format!("{}🔥 комбо +{})", if ch.speed_bonus > 0 { ", " } else { "  (" }, ch.combo_bonus)));
-                    }
                     if ch.fast_track {
                         line.push_str(ts("   ⏩ Ты это знаешь — сразу уровень «Сам»"));
                     }
@@ -796,11 +863,13 @@ fn feedback_banner(app: &mut LearningApp, ui: &mut Ui, p: &Palette) {
                         ui.label(RichText::new(line).size(16.0).strong().color(fg));
                     }
                 } else {
-                    for o in fb.eval.outcomes.iter().filter(|o| !o.passed).take(3) {
+                    for o in fb.eval.outcomes.iter().filter(|o| !o.passed).take(1) {
                         ui.label(RichText::new(&o.feedback).size(15.0).color(p.text));
                     }
                     if let Some(sol) = fb.eval.outcomes.iter().find(|o| !o.passed).and_then(|o| o.solution.clone()) {
-                        ui.label(RichText::new(tr(&format!("Правильно: {sol}"))).font(FontId::monospace(16.0)).color(fg));
+                        ui.collapsing(ts("Показать решение"), |ui| {
+                            ui.label(RichText::new(sol).font(FontId::monospace(16.0)).color(fg));
+                        });
                     }
                     if fb.level_down {
                         ui.label(RichText::new(ts("Сделаем шаг поменьше — уровень понижен, это нормально.")).size(13.0).color(p.muted));
@@ -808,11 +877,11 @@ fn feedback_banner(app: &mut LearningApp, ui: &mut Ui, p: &Palette) {
                 }
             });
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if big_button(ui, ts("ДАЛЕЕ"), if passed { p.green } else { p.red }, vec2(170.0, 52.0)).clicked() {
-                    next = true;
-                }
-                if !passed && ghost_button(ui, ts("ИСПРАВИТЬ"), p, vec2(150.0, 52.0)).clicked() {
-                    fix = true;
+                if can_fix {
+                    fix = big_button(ui, ts("ИСПРАВИТЬ"), p.green, vec2(170.0, 52.0)).clicked();
+                    next = ghost_button(ui, ts("ПРОПУСТИТЬ"), p, vec2(150.0, 52.0)).clicked();
+                } else {
+                    next = big_button(ui, ts("ДАЛЕЕ"), if passed { p.green } else { p.red }, vec2(170.0, 52.0)).clicked();
                 }
                 ui.label(RichText::new("Enter").size(12.0).color(p.muted));
             });
@@ -1038,7 +1107,7 @@ pub fn done(app: &mut LearningApp, ui: &mut Ui) {
     let mut more = false;
     let mut again = false;
     let mut home = false;
-    // Numbers count up during the first second on this screen.
+    // Sprint time animates once; learning metrics remain immediately readable.
     let k: f32 = app.done_since.map(|t| (app.time() - t).clamp(0.0, 1.0) as f32).unwrap_or(1.0);
     if k < 1.0 {
         ui.ctx().request_repaint();
@@ -1115,34 +1184,39 @@ pub fn done(app: &mut LearningApp, ui: &mut Ui) {
                         ts("Урок пройден!")
                     };
                     ui.label(RichText::new(title).size(34.0).strong().color(p.gold));
-                    if s.perfect {
-                        ui.label(RichText::new(ts("💎 Ни одной ошибки — бонус +10 💎")).size(16.0).color(p.blue));
-                    }
                 }
-                if s.streak_extended {
-                    ui.label(RichText::new(tr(&format!("🔥 {} дн. подряд!", s.streak))).size(20.0).strong().color(p.orange));
+                if s.checkpoint.is_none() && s.sprint.is_none() && !s.practised.is_empty() {
+                    let names: Vec<_> =
+                        s.practised.iter().filter_map(|id| SKILLS.iter().find(|skill| skill.id == id).map(|skill| ts(skill.name))).collect();
+                    if !names.is_empty() {
+                        ui.label(RichText::new(tr(&format!("Отработали: {}", names.join(", ")))).size(18.0).color(p.text));
+                    }
                 }
                 ui.add_space(16.0);
                 if s.checkpoint.is_none() {
                     ui.horizontal(|ui| {
-                        let w = 4.0 * 136.0 + 3.0 * 12.0;
+                        let w = 2.0 * 136.0 + 12.0;
                         ui.add_space(((ui.available_width() - w) / 2.0).max(0.0));
-                        tile(ui, &p, ts("ОПЫТ"), &format!("⚡ {:.0}", up(s.xp as f32)), p.gold);
+                        tile(ui, &p, ts("ОПЫТ"), &format!("⚡ {}", s.xp), p.gold);
                         ui.add_space(12.0);
-                        tile(ui, &p, ts("ТОЧНОСТЬ"), &format!("🎯 {:.0}%", up(s.accuracy * 100.0)), p.green);
-                        ui.add_space(12.0);
-                        tile(ui, &p, ts("КРИСТАЛЛЫ"), &format!("💎 {:.0}", up(s.gems as f32)), p.blue);
-                        ui.add_space(12.0);
-                        tile(ui, &p, ts("КОМБО"), &format!("🔥 {:.0}", up(s.best_combo as f32)), p.orange);
+                        tile(ui, &p, ts("ПЕРВАЯ ПОПЫТКА"), &format!("🎯 {:.0}%", s.accuracy * 100.0), p.green);
                     });
                 }
-                for l in &s.level_ups {
-                    ui.add_space(6.0);
-                    ui.label(RichText::new(format!("⬆ {l}")).size(17.0).strong().color(p.green_dark));
-                }
-                ui.add_space(14.0);
-                let today = app.profile.today_xp(now());
-                ui.label(RichText::new(tr(&format!("Цель дня: {today} / {} XP", app.profile.goal))).color(p.muted));
+                ui.add_space(10.0);
+                ui.collapsing(ts("Награды и подробности"), |ui| {
+                    ui.label(tr(&format!("Кристаллы: {} · Лучшее комбо: {}", s.gems, s.best_combo)));
+                    if s.perfect {
+                        ui.label(ts("💎 Ни одной ошибки — бонус +10 💎"));
+                    }
+                    if s.streak_extended {
+                        ui.label(tr(&format!("🔥 {} дн. подряд!", s.streak)));
+                    }
+                    for l in &s.level_ups {
+                        ui.label(format!("⬆ {l}"));
+                    }
+                    let today = app.profile.today_xp(now());
+                    ui.label(tr(&format!("Цель дня: {today} / {} XP", app.profile.goal)));
+                });
                 ui.add_space(20.0);
                 if s.sprint.is_some() {
                     if big_button(ui, ts("ЕЩЁ ЗАЕЗД"), p.orange, vec2(300.0, 56.0)).clicked() {
@@ -1610,7 +1684,7 @@ pub fn stats(app: &mut LearningApp, ui: &mut Ui) {
                 ui.add_space(16.0);
                 ui.horizontal(|ui| {
                     ui.label(RichText::new(ts("🏁 Спринты")).size(18.0).strong().color(p.text));
-                    if ui.button(ts("Спринт: микс")).clicked() {
+                    if ui.add_enabled(!prof.sprint_skills().is_empty(), egui::Button::new(ts("Спринт: микс"))).clicked() {
                         sprint = Some(None);
                     }
                 });
@@ -1679,6 +1753,19 @@ pub fn stats(app: &mut LearningApp, ui: &mut Ui) {
                     ui.add_space(6.0);
                     ui.label(RichText::new(tr(&format!("Перенос в Excel: {done} из {} файлов сданы без замечаний", prof.transfers.len()))).color(p.text));
                 }
+                if !prof.actions.is_empty() {
+                    ui.add_space(6.0);
+                    ui.label(RichText::new(ts("Отдельные действия: точность первой попытки")).strong().color(p.text));
+                    for (id, action) in &prof.actions {
+                        let label = match id.as_str() {
+                            "comparison" => ts("Знаки сравнения"),
+                            "keys.filldown" => ts("Заполнение Ctrl+D"),
+                            "refs.fill" => ts("Заполнение столбца"),
+                            _ => id.as_str(),
+                        };
+                        ui.label(tr(&format!("{label}: {} из {}", action.successes, action.attempts)));
+                    }
+                }
                 if prof.method_total > 0 {
                     ui.add_space(6.0);
                     ui.label(
@@ -1718,7 +1805,7 @@ pub fn stats(app: &mut LearningApp, ui: &mut Ui) {
                                     })
                                     .unwrap_or_else(|| "—".into()),
                             );
-                            if prof.level(s.id) >= 2 {
+                            if prof.sprint_ready(s.id) {
                                 if ui.small_button("🏁").on_hover_text(ts("Спринт по этому навыку")).clicked() {
                                     sprint = Some(Some(s.id.to_string()));
                                 }

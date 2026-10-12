@@ -6,6 +6,8 @@
 
 pub mod check;
 pub mod content;
+pub mod diagnostics;
+pub mod errors;
 pub mod fsrs;
 pub mod profile;
 pub mod quiz;
@@ -137,11 +139,29 @@ impl Task {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Current {
     pub task: Task,
+    /// Preserve assessment/review semantics when resuming a task.
+    #[serde(default)]
+    pub slot: Option<Slot>,
     pub workbook: Workbook,
     pub lesson: Option<Lesson>,
     pub interview: Option<Interview>,
     pub elapsed: f32,
     pub hints: u32,
+    /// Requested task hints, separate from contextual mentor assistance.
+    /// Old saves use the total hint count when this field is absent.
+    #[serde(default)]
+    pub shown_hints: Option<u32>,
+    /// Only the first submission affects XP and the skill staircase, including after restart.
+    #[serde(default)]
+    pub recorded: bool,
+    /// The feedback currently displayed, restored without recording another attempt.
+    #[serde(default)]
+    pub evaluation: Option<Evaluation>,
+    /// Preserve the current diagnosis/method question and its already recorded pick.
+    #[serde(default)]
+    pub choice: usize,
+    #[serde(default)]
+    pub picked: Option<usize>,
     #[serde(default)]
     pub keys: Vec<String>,
     /// The SQL query being written.

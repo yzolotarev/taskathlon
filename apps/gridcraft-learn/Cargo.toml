@@ -21,5 +21,7 @@ serde_json.workspace = true
 egui.workspace = true
 eframe = { workspace = true, features = ["default_fonts", "wgpu", "x11", "wayland"] }
 ureq = { version = "3.4", default-features = false, features = ["rustls", "json"] }
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+rfd.workspace = true
 [dev-dependencies]
 egui_kittest = { workspace = true, features = ["wgpu", "snapshot"] }

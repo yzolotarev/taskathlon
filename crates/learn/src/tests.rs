@@ -17,6 +17,7 @@ fn solve(task: &Task, s: &mut Session) -> Vec<String> {
             Kind::Formula { cell, reference, .. } => sheet::set(s, cell, &Cell::Formula(reference.clone())).unwrap(),
             Kind::Value { cell, expected } => sheet::set(s, cell, expected).unwrap(),
             Kind::Keys { combo } => keys.push(combo.clone()),
+            Kind::Today { cell } => sheet::set(s, cell, &Cell::Date(gridcraft_engine::calc::now_serial().floor())).unwrap(),
             Kind::Bold { range } => {
                 s.execute("home.bold", json!({"range": range})).unwrap();
             }
@@ -295,12 +296,18 @@ fn save_round_trip_resumes_the_exercise() {
         version: SAVE_VERSION,
         profile: p,
         current: Some(Current {
+            slot: None,
             task: t.clone(),
             workbook: (*s.doc().unwrap().wb).clone(),
             lesson: None,
             interview: None,
             elapsed: 3.0,
             hints: 0,
+            shown_hints: Some(0),
+            recorded: true,
+            evaluation: None,
+            choice: 0,
+            picked: None,
             keys: vec![],
             query: String::new(),
         }),
@@ -312,7 +319,7 @@ fn save_round_trip_resumes_the_exercise() {
 }
 
 #[test]
-fn speed_and_combo_earn_more_and_familiar_skills_move_faster() {
+fn speed_does_not_replace_accuracy_and_testout_still_skips_ahead() {
     let now = 1_800_000_000;
     let mut p = Profile::default();
     let t = Task::generate(&Spec::new("start.add", 1, 3)).unwrap();
@@ -320,10 +327,10 @@ fn speed_and_combo_earn_more_and_familiar_skills_move_faster() {
     let fast = p.clone().record(&t, true, t.goal_seconds * 0.3, 0, 4, false, now);
     assert_eq!(fast.speed, profile::Speed::Lightning);
     assert!(fast.xp >= slow.xp + 10 + 8, "{} vs {}", fast.xp, slow.xp);
-    // First try, fast and clean: straight to level 3.
+    // A fast first try cannot prove independent mastery.
     let c = p.record(&t, true, t.goal_seconds * 0.3, 0, 0, false, now);
-    assert!(c.fast_track);
-    assert_eq!(p.level("start.add"), 3);
+    assert!(!c.fast_track);
+    assert_eq!(p.level("start.add"), 1);
     // A slow first try climbs normally.
     let t2 = Task::generate(&Spec::new("start.sub", 1, 3)).unwrap();
     p.record(&t2, true, t2.goal_seconds, 0, 0, false, now);
@@ -393,6 +400,10 @@ fn sprint_plans_comparable_runs_and_keeps_records() {
     let now = 1_800_000_000;
     let mut p = Profile::default();
     p.skills.entry("start.add".into()).or_default().level = 2;
+    for _ in 0..3 {
+        let task = Task::generate(&Spec::new("start.add", 2, p.seed())).unwrap();
+        p.record(&task, true, 100.0, 0, 0, false, now);
+    }
     let l = p.plan_sprint(None);
     assert_eq!(l.total, profile::SPRINT_LEN);
     assert_eq!(l.sprint.as_deref(), Some("mix"));
@@ -521,4 +532,196 @@ fn a_case_goes_to_excel_and_comes_back_graded() {
         assert!(eval.passed(), "{}: {failed:?}", c.id);
     }
     std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn and_or_tasks_include_discriminating_cases_on_every_level() {
+    for level in 1..=4 {
+        for seed in 0..32 {
+            let task = Task::generate(&Spec::new("logic.andor", level, seed)).unwrap();
+            let formulas: Vec<&str> = task
+                .checks
+                .iter()
+                .filter_map(|c| match &c.kind {
+                    Kind::Formula { reference, .. } => Some(reference.as_str()),
+                    _ => None,
+                })
+                .collect();
+            let values = sheet::probe(&task.setup, &formulas).unwrap();
+            assert!(values.iter().any(|v| matches!(v, gridcraft_engine::core::Value::Text(t) if t.as_ref() == "Да")));
+            assert!(values.iter().any(|v| matches!(v, gridcraft_engine::core::Value::Text(t) if t.as_ref() == "Нет")));
+            // Replacing AND with OR (or vice versa) must change a visible result.
+            let reversed: Vec<String> =
+                formulas.iter().map(|f| if f.contains("AND(") { f.replace("AND(", "OR(") } else { f.replace("OR(", "AND(") }).collect();
+            let refs: Vec<&str> = reversed.iter().map(String::as_str).collect();
+            assert_ne!(values, sheet::probe(&task.setup, &refs).unwrap());
+            let wrong_boundary: Vec<String> =
+                formulas.iter().map(|f| if f.contains("AND(") { f.replace(">=", ">") } else { f.replace(">2", ">=2") }).collect();
+            let refs: Vec<&str> = wrong_boundary.iter().map(String::as_str).collect();
+            assert_ne!(values, sheet::probe(&task.setup, &refs).unwrap(), "boundary is not exercised: {seed}, level {level}");
+        }
+    }
+}
+
+#[test]
+fn date_shortcut_requires_today_in_the_requested_cell() {
+    let task = Task::generate(&Spec::new("keys.date", 2, 9)).unwrap();
+    let mut s = task.session().unwrap();
+    let keys = vec!["Ctrl+;".to_string()];
+    assert!(!evaluate(&task, &s, &keys).unwrap().passed(), "recording the key alone is insufficient");
+    let today = gridcraft_engine::calc::now_serial().floor();
+    sheet::set(&mut s, "Z20", &Cell::Date(today)).unwrap();
+    assert!(!evaluate(&task, &s, &keys).unwrap().passed(), "date in the wrong cell must fail");
+    sheet::set(&mut s, &task.focus, &Cell::Date(today - 1.0)).unwrap();
+    assert!(!evaluate(&task, &s, &keys).unwrap().passed(), "yesterday must fail");
+    sheet::set(&mut s, &task.focus, &Cell::Date(today)).unwrap();
+    assert!(evaluate(&task, &s, &keys).unwrap().passed());
+    assert!(!evaluate(&task, &s, &[]).unwrap().passed(), "the requested shortcut remains required");
+    s.execute("edit.clearContents", json!({"range": task.focus})).unwrap();
+    assert!(!evaluate(&task, &s, &keys).unwrap().passed(), "clearing the date must fail");
+}
+
+#[test]
+fn dedupe_preserves_original_names_and_their_associated_tax_ids() {
+    let task = Task::generate(&Spec::new("data.dedupe", 2, 9)).unwrap();
+    let mut s = task.session().unwrap();
+    let keys = solve(&task, &mut s);
+    assert!(evaluate(&task, &s, &keys).unwrap().passed());
+    let Kind::Unique { col, first, last, expected, .. } = &task.checks[0].kind else { panic!() };
+    let tax_id = sheet::a1(*first, col + 1);
+    let original_tax_id = sheet::value(&s, &tax_id).unwrap().as_f64().unwrap();
+    sheet::set(&mut s, &tax_id, &Cell::Num(original_tax_id + 1.0)).unwrap();
+    assert!(!evaluate(&task, &s, &keys).unwrap().passed(), "changing a related INN must fail");
+    sheet::set(&mut s, &tax_id, &Cell::Num(original_tax_id)).unwrap();
+    assert!(evaluate(&task, &s, &keys).unwrap().passed());
+    sheet::set(&mut s, &sheet::a1(*first, *col), &Cell::Text("Invented counterparty".into())).unwrap();
+    assert!(!evaluate(&task, &s, &keys).unwrap().passed(), "distinct but invented names must fail");
+    let mut s = task.session().unwrap();
+    for r in *first..=*last {
+        if r < first + *expected as u32 {
+            sheet::set(&mut s, &sheet::a1(r, *col), &Cell::Text(format!("Fake {r}"))).unwrap();
+        } else {
+            s.execute("edit.clearContents", json!({"range": sheet::a1(r, *col)})).unwrap();
+        }
+    }
+    assert!(!evaluate(&task, &s, &[]).unwrap().passed(), "the original count of unique names alone is insufficient");
+}
+
+#[test]
+fn learned_error_skills_return_for_due_reviews_without_lengthening_the_lesson() {
+    let mut profile = Profile::default();
+    for error in gridcraft_engine::core::CellError::ALL {
+        let id = errors::skill_id(error.as_str());
+        let progress = profile.skills.entry(id).or_default();
+        progress.level = 2;
+        progress.card.reps = 1;
+        progress.card.due = 10;
+    }
+    let lesson = profile.plan_lesson(10, Some("fn.sum"));
+    assert_eq!(lesson.total, 8);
+    assert!(lesson.queue.iter().any(|slot| matches!(slot, Slot::Review(id) if id.starts_with("errors."))));
+    let early = profile.plan_lesson(9, Some("fn.sum"));
+    assert!(!early.queue.iter().any(|slot| matches!(slot, Slot::Review(id) if id.starts_with("errors."))));
+}
+
+#[test]
+fn lesson_planning_retains_remediation_beyond_this_lessons_two_slots() {
+    let mut profile = Profile::default();
+    profile.remediation = vec!["start.add".into(), "start.sub".into(), "start.mul".into(), "start.div".into()];
+    let first = profile.plan_lesson(1_800_000_000, None);
+    assert_eq!(first.queue.iter().filter(|s| matches!(s, Slot::Retry(_))).count(), 2);
+    assert_eq!(profile.remediation, vec!["start.mul", "start.div"]);
+    let second = profile.plan_lesson(1_800_000_000, None);
+    let retries: Vec<_> = second
+        .queue
+        .iter()
+        .filter_map(|s| match s {
+            Slot::Retry(id) => Some(id.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(retries, vec!["start.mul", "start.div"]);
+    assert!(profile.remediation.is_empty());
+}
+
+#[test]
+fn diagnosis_separates_reversed_comparison_from_successful_filldown() {
+    let task = (1..100)
+        .map(|seed| Task::generate(&Spec::new("logic.andor", 2, seed)).unwrap())
+        .find(|task| matches!(&task.checks[0].kind, Kind::Formula { reference, .. } if reference.contains("OR(")))
+        .unwrap();
+    let mut session = task.session().unwrap();
+    let Kind::Formula { cell, reference, .. } = &task.checks[0].kind else { panic!() };
+    let at = reference.find('<').unwrap();
+    let mut wrong = reference.clone();
+    wrong.replace_range(at..at + 1, ">");
+    sheet::set(&mut session, cell, &Cell::Formula(wrong)).unwrap();
+    let cells = task.answer_cells();
+    session.execute("edit.fillDown", json!({"range": format!("{}:{}", cells[0], cells[cells.len()-1])})).unwrap();
+    let mut eval = evaluate(&task, &session, &[]).unwrap();
+    let mut profile = Profile::default();
+    diagnostics::record(&mut profile, &task, &session, &["Ctrl+D".into()], &mut eval).unwrap();
+    assert_eq!(profile.actions["comparison"].successes, 0);
+    assert_eq!(profile.actions["keys.filldown"].successes, 1);
+    assert_eq!(profile.remediation, vec!["logic.if"]);
+    assert!(eval.outcomes.iter().any(|o| o.feedback.contains("знак сравнения")));
+    let restored: Profile = serde_json::from_slice(&serde_json::to_vec(&profile).unwrap()).unwrap();
+    assert_eq!(restored.actions["keys.filldown"].successes, 1);
+}
+
+#[test]
+fn incomplete_column_practises_fill_without_diagnosing_comparisons() {
+    let task = Task::generate(&Spec::new("logic.andor", 2, 3)).unwrap();
+    let mut session = task.session().unwrap();
+    let Kind::Formula { cell, reference, .. } = &task.checks[0].kind else { panic!() };
+    sheet::set(&mut session, cell, &Cell::Formula(reference.clone())).unwrap();
+    let mut eval = evaluate(&task, &session, &[]).unwrap();
+    let mut profile = Profile::default();
+    diagnostics::record(&mut profile, &task, &session, &[], &mut eval).unwrap();
+    assert_eq!(profile.remediation, vec!["refs.fill"]);
+    assert!(!profile.actions.contains_key("comparison"));
+}
+
+#[test]
+fn case_reviews_each_demonstrated_skill_once_and_never_credits_a_partial_skill() {
+    let task = Task::generate(&Spec::new("case.sales", 3, 1)).unwrap();
+    let mut profile = Profile::default();
+    let t = Task::generate(&Spec::new("fn.sum", 2, 1)).unwrap();
+    profile.record(&t, true, 100.0, 0, 0, false, 1_800_000_000);
+    let reps = profile.skills["fn.sum"].card.reps;
+    let outcome = |ok| Outcome { label: "sum".into(), skill: "fn.sum".into(), passed: ok, feedback: String::new(), solution: None };
+    profile.record_case(&task, &Evaluation { score: 1.0, outcomes: vec![outcome(true), outcome(true)] }, 100.0, None, 1_800_086_400);
+    assert_eq!(profile.skills["fn.sum"].card.reps, reps + 1);
+    profile.record_case(&task, &Evaluation { score: 0.5, outcomes: vec![outcome(true), outcome(false)] }, 100.0, None, 1_800_172_800);
+    assert_eq!(profile.skills["fn.sum"].card.reps, reps + 2);
+    assert!(profile.remediation.contains(&"fn.sum".into()));
+}
+
+#[test]
+fn prerequisite_remediation_requires_evidence_and_keeps_the_original_target() {
+    let mut profile = Profile::default();
+    profile.remediation.push("logic.andor".into());
+    let lesson = profile.plan_lesson(1_800_000_000, None);
+    assert!(matches!(lesson.queue.front(), Some(Slot::Retry(id)) if id == "logic.andor"));
+    profile.skills.entry("logic.if".into()).or_default().misses = 2;
+    profile.remediation.push("logic.andor".into());
+    let lesson = profile.plan_lesson(1_800_000_000, None);
+    assert!(matches!(lesson.queue.front(), Some(Slot::Retry(id)) if id == "logic.if"));
+    assert_eq!(profile.remediation, vec!["logic.andor"]);
+}
+
+#[test]
+fn sprints_require_stable_accuracy_and_a_new_miss_closes_them() {
+    let mut profile = Profile::default();
+    assert!(profile.plan_sprint(None).queue.is_empty());
+    profile.skills.entry("start.add".into()).or_default().level = 2;
+    let task = Task::generate(&Spec::new("start.add", 2, 1)).unwrap();
+    for _ in 0..2 {
+        profile.record(&task, true, 100.0, 0, 0, false, 1_800_000_000);
+    }
+    assert!(!profile.sprint_ready("start.add"));
+    profile.record(&task, true, 100.0, 0, 0, false, 1_800_000_000);
+    assert!(profile.sprint_ready("start.add"));
+    profile.record(&task, false, 100.0, 0, 0, false, 1_800_000_000);
+    assert!(!profile.sprint_ready("start.add"));
 }

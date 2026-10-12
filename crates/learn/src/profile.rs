@@ -81,6 +81,12 @@ pub struct SkillProgress {
     pub hints: u32,
 }
 
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct ActionProgress {
+    pub attempts: u32,
+    pub successes: u32,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Attempt {
     pub skill: String,
@@ -112,6 +118,10 @@ pub struct InterviewResult {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Profile {
+    /// First encounters persist across exercises and restarts.
+    pub seen_errors: Vec<String>,
+    /// Error literacy tasks waiting for the next ordinary lesson slot.
+    pub pending_errors: Vec<String>,
     pub xp: u32,
     /// Local day number → XP earned that day.
     pub days: BTreeMap<u64, u32>,
@@ -121,6 +131,8 @@ pub struct Profile {
     /// Hours east of UTC for day boundaries (Moscow by default).
     pub utc_offset: i64,
     pub skills: BTreeMap<String, SkillProgress>,
+    /// First-submission evidence for individual actions, independent of whole-task success.
+    pub actions: BTreeMap<String, ActionProgress>,
     pub cases: BTreeMap<String, CaseProgress>,
     /// Skills a failed case or interview sent back for practice.
     pub remediation: Vec<String>,
@@ -129,6 +141,10 @@ pub struct Profile {
     pub next_seed: u64,
     pub sound: bool,
     pub dark: bool,
+    /// Preferred spreadsheet magnification, reused for new exercises.
+    pub sheet_zoom: u16,
+    /// Preferred size of the whole interface.
+    pub interface_scale: u16,
     /// English interface instead of Russian.
     #[serde(default)]
     pub english: bool,
@@ -287,6 +303,8 @@ pub enum Speed {
 impl Default for Profile {
     fn default() -> Self {
         Self {
+            seen_errors: Vec::new(),
+            pending_errors: Vec::new(),
             xp: 0,
             days: BTreeMap::new(),
             streak: 0,
@@ -294,6 +312,7 @@ impl Default for Profile {
             goal: 50,
             utc_offset: 3,
             skills: BTreeMap::new(),
+            actions: BTreeMap::new(),
             cases: BTreeMap::new(),
             remediation: Vec::new(),
             log: Vec::new(),
@@ -301,6 +320,8 @@ impl Default for Profile {
             next_seed: 1,
             sound: true,
             dark: false,
+            sheet_zoom: 100,
+            interface_scale: 100,
             english: false,
             checkpoints: Vec::new(),
             pending_transfer: None,
@@ -364,6 +385,9 @@ pub enum Slot {
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Lesson {
+    /// The entire skip-ahead assessment, including its final task.
+    #[serde(default)]
+    pub test_out: bool,
     pub queue: VecDeque<Slot>,
     pub total: usize,
     pub done: usize,
@@ -374,6 +398,9 @@ pub struct Lesson {
     pub retries: u8,
     pub seconds: f32,
     pub level_ups: Vec<String>,
+    /// Skills actually submitted in this lesson; preserved across restart.
+    #[serde(default)]
+    pub practised: Vec<String>,
     /// Speed run: "mix" or a skill id. Passes advance at once; the clock is what counts.
     #[serde(default)]
     pub sprint: Option<String>,
@@ -465,9 +492,28 @@ impl Profile {
     pub fn plan_lesson(&mut self, now: u64, focus: Option<&str>) -> Lesson {
         let len = 8usize;
         let mut queue = VecDeque::new();
-        let remedy: Vec<String> = self.remediation.drain(..).take(2).collect();
+        // Error repair skills use the same FSRS cards, with separate discovery so they
+        // need not appear as a new curriculum unit or unlock prerequisites.
+        let mut error_reviews: Vec<_> =
+            self.skills.iter().filter(|(id, progress)| id.starts_with("errors.") && progress.card.reps > 0 && progress.card.due <= now).collect();
+        error_reviews.sort_by_key(|(_, progress)| progress.card.due);
+        for (id, _) in error_reviews.into_iter().take(2) {
+            queue.push_back(Slot::Review(id.clone()));
+        }
+        let remedy: Vec<String> = self.remediation.drain(..self.remediation.len().min(2)).collect();
         for r in &remedy {
-            queue.push_back(Slot::Retry(r.clone()));
+            let target = crate::diagnostics::prerequisites(r)
+                .iter()
+                .copied()
+                .find(|id| {
+                    let failures: Vec<_> = self.log.iter().rev().filter(|a| a.skill == *id).take(2).collect();
+                    self.skills.get(*id).is_some_and(|p| p.misses >= 2) || failures.len() == 2 && failures.iter().all(|a| !a.passed)
+                })
+                .unwrap_or(r);
+            queue.push_back(Slot::Retry(target.into()));
+            if target != r && !self.remediation.contains(r) {
+                self.remediation.push(r.clone());
+            }
         }
         let due = self.due(now);
         let reviews: Vec<&str> = due.iter().copied().filter(|d| !remedy.iter().any(|r| r == d) && Some(*d) != focus).take(2).collect();
@@ -823,21 +869,36 @@ impl Profile {
         change
     }
 
-    /// Skills good for a speed run: practised to level 2 or more.
+    /// Speed practice requires three recent unaided first-attempt successes.
+    pub fn sprint_ready(&self, id: &str) -> bool {
+        let recent: Vec<_> = self.log.iter().rev().filter(|a| a.skill == id && a.mode == Mode::Drill).take(3).collect();
+        self.level(id) >= 2 && recent.len() == 3 && recent.iter().all(|a| a.passed && a.hints == 0 && a.level >= 2)
+    }
+
+    /// Skills with demonstrated accuracy before timed practice.
     pub fn sprint_skills(&self) -> Vec<&'static str> {
-        SKILLS.iter().filter(|s| self.level(s.id) >= 2).map(|s| s.id).collect()
+        SKILLS.iter().filter(|s| self.sprint_ready(s.id)).map(|s| s.id).collect()
     }
 
     /// Ten tasks against the clock: one skill, or a mix of practised skills.
     pub fn plan_sprint(&mut self, skill: Option<&str>) -> Lesson {
         let pool: Vec<String> = match skill {
-            Some(s) => vec![s.to_string()],
+            Some(s) => {
+                if self.sprint_ready(s) {
+                    vec![s.to_string()]
+                } else {
+                    Vec::new()
+                }
+            }
             None => {
                 let v = self.sprint_skills();
-                if v.is_empty() { vec!["start.add".into(), "start.mul".into(), "fn.sum".into()] } else { v.iter().map(|s| s.to_string()).collect() }
+                v.iter().map(|s| s.to_string()).collect()
             }
         };
         let mut queue = VecDeque::new();
+        if pool.is_empty() {
+            return Lesson { sprint: Some(skill.unwrap_or("mix").to_string()), ..Lesson::default() };
+        }
         let mut k = self.seed() as usize;
         for i in 0..SPRINT_LEN {
             let id = pool.get((k + i * 7) % pool.len().max(1)).cloned().unwrap_or_else(|| "start.add".into());
@@ -882,7 +943,7 @@ impl Profile {
     pub fn plan_testout(&self, unit: usize) -> Lesson {
         let queue: VecDeque<Slot> =
             SKILLS.iter().filter(|s| s.unit == unit && self.level(s.id) < 3).take(8).map(|s| Slot::TestOut(s.id.into())).collect();
-        Lesson { total: queue.len(), queue, retries: 3, ..Lesson::default() }
+        Lesson { total: queue.len(), queue, retries: 3, test_out: true, ..Lesson::default() }
     }
 
     /// Records a drill answer: the first evaluation of a task decides the grade.
@@ -892,7 +953,6 @@ impl Profile {
         let id = task.spec.skill.clone();
         let level = task.spec.level;
         let p = self.skills.entry(id.clone()).or_default();
-        let first_ever = p.attempts == 0;
         if p.level == 0 {
             p.level = 1;
         }
@@ -914,8 +974,6 @@ impl Profile {
             Grade::Again
         } else if hints > 0 {
             Grade::Hard
-        } else if speed != Speed::Normal && level >= 2 {
-            Grade::Easy
         } else {
             Grade::Good
         };
@@ -933,15 +991,9 @@ impl Profile {
                 p.clean = 0;
                 change.level_up = Some(3);
                 change.fast_track = true;
-            } else if hints == 0 && first_ever && level == 1 && speed != Speed::Normal {
-                // Clearly familiar from the first try: jump past the copying stage.
-                p.level = 3;
-                p.clean = 0;
-                change.level_up = Some(3);
-                change.fast_track = true;
             } else if hints == 0 && on_level {
-                // Understanding shows as speed: a fast clean answer counts double.
-                p.clean = p.clean.saturating_add(if speed == Speed::Normal { 1 } else { 2 });
+                // Accuracy advances mastery; response speed does not substitute for recall.
+                p.clean = p.clean.saturating_add(1);
                 let need = NEED.get(usize::from(p.level.saturating_sub(1))).copied().unwrap_or(u8::MAX);
                 if p.level < 4 && p.clean >= need {
                     p.level += 1;
@@ -1024,7 +1076,12 @@ impl Profile {
                 missed.push(o.skill.clone());
             }
         }
+        let mut credited = Vec::new();
         for o in &eval.outcomes {
+            if credited.contains(&o.skill) {
+                continue;
+            }
+            credited.push(o.skill.clone());
             if let Some(p) = self.skills.get_mut(&o.skill)
                 && p.card.reps > 0
                 && !missed.contains(&o.skill)

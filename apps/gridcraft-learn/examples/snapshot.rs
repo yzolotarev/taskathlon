@@ -1,5 +1,6 @@
 //! Offscreen screenshot of the actual learning UI, not a mockup.
-//! `cargo run -p gridcraft-learn --example snapshot -- out.png [home|lesson|wrong|done|case|report|stats|sql|blitz|blitzreport]`
+//! `cargo run -p gridcraft-learn --example snapshot -- out.png [home|lesson|formula|mentor|wrong|done|case|report|stats|sql|blitz|blitzreport]`
+//! Optional `SNAP_WIDTH` and `SNAP_HEIGHT` select the viewport for layout checks.
 use gridcraft_learn::{LearningApp, Screen};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -14,6 +15,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     match which.as_str() {
         "lesson" => app.start_lesson(None)?,
+        "formula" | "mentor" | "hints" => {
+            app.start_lesson(Some("logic.andor"))?;
+            if which == "hints" {
+                for _ in 0..3 {
+                    app.hint();
+                }
+            }
+            if which == "mentor" {
+                if let Some(cell) = app.active.as_ref().and_then(|a| a.task.answer_cells().first().cloned()) {
+                    app.sheet.session.execute("cell.set", serde_json::json!({"cell": cell, "input": "=NO_SUCH_FUNCTION(1)"}))?;
+                    app.observe_errors();
+                }
+            }
+        }
         "wrong" => {
             app.start_lesson(None)?;
             if let Some(cell) = app.active.as_ref().and_then(|a| a.task.answer_cells().first().cloned()) {
@@ -22,11 +37,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             app.check()?;
         }
         "done" => {
-            app.start_lesson(None)?;
+            app.start_lesson(Some("fn.sum"))?;
             for _ in 0..12 {
                 if app.screen != Screen::Lesson {
                     break;
                 }
+                if let Some(active) = &app.active {
+                    let checks = active.task.checks.clone();
+                    for check in checks {
+                        if let gridcraft_learn_core::Kind::Formula { cell, reference, .. } = check.kind {
+                            app.sheet.session.execute("cell.set", serde_json::json!({"cell": cell, "input": reference}))?;
+                        }
+                    }
+                }
+                app.check()?;
                 app.advance()?;
             }
         }
@@ -119,7 +143,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         _ => {}
     }
-    let mut harness = egui_kittest::Harness::builder().with_size(egui::vec2(1280.0, 820.0)).with_max_steps(20).wgpu().build_ui_state(
+    if let Ok(zoom) = std::env::var("SNAP_ZOOM") {
+        if let Ok(percent) = zoom.parse::<u16>() {
+            if app.active.is_some() {
+                app.sheet.session.execute("view.zoom", serde_json::json!({"percent": percent}))?;
+            }
+        }
+    }
+    let width = std::env::var("SNAP_WIDTH").ok().and_then(|s| s.parse::<f32>().ok()).unwrap_or(1280.0);
+    let height = std::env::var("SNAP_HEIGHT").ok().and_then(|s| s.parse::<f32>().ok()).unwrap_or(820.0);
+    let mut harness = egui_kittest::Harness::builder().with_size(egui::vec2(width, height)).with_max_steps(20).wgpu().build_ui_state(
         |ui, app: &mut LearningApp| {
             let ctx = ui.ctx().clone();
             app.logic(&ctx);

@@ -471,14 +471,21 @@ pub fn if_(g: &mut Gen) -> Result<Task> {
 pub fn and_or(g: &mut Gen) -> Result<Task> {
     let n = g.rows();
     let t = g.table(ts("Премии менеджерам"), &[ts("Менеджер"), ts("План"), ts("Факт"), ts("Опоздания")], n);
+    // Every task includes all four truth combinations, plus boundary cases.
+    // Shuffle with the data seed so repeated practice does not teach row positions.
+    let mut situations = vec![(90, 0), (90, 3), (100, 0), (110, 3), (100, 2)];
+    while situations.len() < n as usize {
+        situations.push((g.d.int(70, 130), g.d.int(0, 4)));
+    }
+    g.d.shuffle(&mut situations);
     for (i, r) in t.rows().enumerate() {
         g.txt(&t, 0, r, PEOPLE.get(i % PEOPLE.len()).copied().map(ts).unwrap_or(ts("Менеджер")));
         let plan = g.d.amount(300_000, 900_000, 10_000);
-        let fact = (plan * g.d.int(70, 130) as f64 / 100.0).round();
+        let (percent, late) = situations[i];
+        let fact = (plan * percent as f64 / 100.0).round();
         g.num(&t, 1, r, plan);
         g.num(&t, 2, r, fact);
-        let late = if g.d.chance(60) { 0.0 } else { g.d.int(1, 4) as f64 };
-        g.num(&t, 3, r, late);
+        g.num(&t, 3, r, late as f64);
     }
     let (b, c, d) = (t.col(1), t.col(2), t.col(3));
     if g.l.chance(50) {
@@ -1088,7 +1095,7 @@ pub fn dedupe(g: &mut Gen) -> Result<Task> {
         g.num(&t, 1, r, *inn);
     }
     g.setup.width(t.col(1), 120.0);
-    g.check(ts("Дубликаты"), Kind::Unique { col: t.col(0), first: t.first, last: t.last, expected: distinct });
+    g.check(ts("Дубликаты"), Kind::Unique { col: t.col(0), last_col: Some(t.col(1)), first: t.first, last: t.last, expected: distinct });
     let prompt = match g.level {
         1 => ts("Встань в таблицу → «Данные» → «Удалить дубликаты» → ОК.").to_string(),
         _ => ts("В справочнике повторы. Оставь каждого контрагента по одному разу.").to_string(),
