@@ -41,6 +41,10 @@ fn top_bar(app: &mut LearningApp, ui: &mut Ui, p: &Palette) {
                     if ui.button("📊 Статистика").clicked() {
                         app.screen = Screen::Stats;
                     }
+                    if ui.button("📒 Учёт").on_hover_text("Учётная программа: документы, проводки, ОСВ").clicked()
+                    {
+                        app.screen = Screen::Ledger;
+                    }
                     ui.add_space(16.0);
                     let t = now();
                     ui.label(RichText::new(format!("👑 {:.0}%", app.profile.mastery() * 100.0)).size(17.0).strong().color(p.gold))
@@ -187,6 +191,18 @@ fn side_column(app: &mut LearningApp, ui: &mut Ui, p: &Palette, t: u64, frontier
             }
         } else {
             ui.label(RichText::new("Откроется, когда освоишь первые навыки (уровень 2).").size(12.0).color(p.muted));
+        }
+    });
+    card(ui, p, None, |ui| {
+        ui.label(RichText::new("📒 Учёт").size(17.0).strong().color(p.text));
+        ui.label(
+            RichText::new("Учётная программа как на работе: документы, «Провести», проводки, ОСВ, закрытие месяца. Демо-компания уже ведёт январь.")
+                .size(13.0)
+                .color(p.muted),
+        );
+        ui.add_space(6.0);
+        if big_button(ui, "ОТКРЫТЬ УЧЁТ", Color32::from_rgb(220, 90, 160), vec2(ui.available_width(), 44.0)).clicked() {
+            app.screen = Screen::Ledger;
         }
     });
     card(ui, p, None, |ui| {

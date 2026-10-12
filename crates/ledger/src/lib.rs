@@ -12,6 +12,7 @@ pub mod catalog;
 pub mod demo;
 pub mod document;
 pub mod money;
+pub mod practice;
 pub mod report;
 #[cfg(test)]
 mod tests;

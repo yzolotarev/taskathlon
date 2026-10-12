@@ -104,6 +104,9 @@ pub fn trial_balance(book: &Book, from: Date, to: Date) -> Vec<Row> {
             for s in accounts::CHART.iter().filter(|s| s.code.starts_with(&format!("{}.", a.code))) {
                 g.add(&row_for(book, s.code, s.name, from, to));
             }
+            // A group shows the synthetic balance: its subaccounts net out (90 closes to zero).
+            (g.open_dt, g.open_kt) = split(g.open_dt - g.open_kt);
+            (g.close_dt, g.close_kt) = split(g.close_dt - g.close_kt);
             if !g.is_empty() {
                 rows.push(g);
             }

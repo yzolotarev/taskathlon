@@ -622,6 +622,29 @@ impl Profile {
     }
 
     /// A finished blitz: XP by points, quest and badge.
+    /// One solved task in the accounting program: base XP plus a speed bonus against par.
+    pub fn record_ledger_task(&mut self, seconds: f32, goal_seconds: u32, now: u64) -> Change {
+        let mut change = Change::default();
+        let ratio = seconds / goal_seconds.max(1) as f32;
+        change.speed = if ratio <= 0.4 {
+            Speed::Lightning
+        } else if ratio <= 0.7 {
+            Speed::Fast
+        } else {
+            Speed::Normal
+        };
+        change.speed_bonus = match change.speed {
+            Speed::Lightning => 10,
+            Speed::Fast => 5,
+            Speed::Normal => 0,
+        };
+        if change.speed == Speed::Lightning {
+            self.lightning = self.lightning.saturating_add(1);
+        }
+        self.add_xp(10 + change.speed_bonus, now, &mut change);
+        change
+    }
+
     pub fn record_blitz(&mut self, result: crate::quiz::BlitzResult, missed: &[String], now: u64) -> Change {
         let mut change = Change::default();
         let xp = result.points / 2;

@@ -30,8 +30,10 @@ pub fn company() -> Result<Book, LedgerError> {
     let _petrov = c.add_employee("Петров Олег Иванович", "Менеджер по продажам", Money::rub(80_000));
     let _kim = c.add_employee("Ким Анна Викторовна", "Бухгалтер", Money::rub(75_000));
     let _laptop = c.add_asset("Ноутбук бухгалтера", 36);
+    // Opening balances are entered on the last day of the previous year.
+    let opening = Date::new(2025, 12, 31).unwrap_or(Date { y: 2025, m: 12, d: 31 });
     b.add_posted(
-        d(1, 1),
+        opening,
         Body::Opening {
             lines: vec![
                 OpeningLine { account: "51".into(), sub: None, debit: Money::rub(500_000), credit: Money::ZERO, qty: 0 },

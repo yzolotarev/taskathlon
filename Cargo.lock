@@ -1673,6 +1673,7 @@ dependencies = [
  "egui_kittest",
  "gridcraft-engine",
  "gridcraft-learn-core",
+ "gridcraft-ledger",
  "gridcraft-ui-egui",
  "serde_json",
  "ureq",

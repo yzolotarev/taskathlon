@@ -15,4 +15,4 @@
 - Reminders need systemd user services and `notify-send`. Without them the settings show a crontab line instead.
 - Gems, quests and wagers are local and only motivational; nothing is sent to the network.
 - Tax rates in the accounting tasks are simplified for training.
-- 1C is not emulated yet. A clean-room accounting module is planned.
+- The accounting module is a simplified clean-room ledger; see docs/ledger/PLAN.md for what is simplified.

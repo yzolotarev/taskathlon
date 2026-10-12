@@ -147,3 +147,64 @@ fn json_round_trip_reposts() {
     let c = Book::from_json(&s).unwrap();
     assert_eq!(c.entries, b.entries);
 }
+
+#[test]
+fn february_workshop_is_solvable_and_checks_are_strict() {
+    use crate::practice::{Check, february};
+    for seed in [1, 7, 42, 2026] {
+        let tasks = february(seed);
+        let mut b = demo::january().unwrap();
+        let end = d(2, 28);
+        for t in &tasks {
+            assert!(t.check(&b, None).is_err() || t.asks_number(), "{} passes before doing anything", t.title);
+        }
+        for t in &tasks {
+            match &t.check {
+                Check::Posted { kind, want, .. } => {
+                    let amount = want.amount.unwrap_or_default();
+                    let body = match kind {
+                        crate::DocKind::Receipt => {
+                            Body::Receipt { supplier: 1, account: "41".into(), lines: vec![GoodsLine { item: 1, qty: want.qty.unwrap(), amount }] }
+                        }
+                        crate::DocKind::Sale => Body::Sale { customer: 4, lines: vec![GoodsLine { item: 1, qty: want.qty.unwrap(), amount }] },
+                        crate::DocKind::Services => Body::Services {
+                            supplier: 5,
+                            lines: vec![document::ExpenseLine { text: "Аренда".into(), amount, vat: Vat::R22, account: "26".into() }],
+                        },
+                        crate::DocKind::CashOut => Body::CashOut { to: document::CashOut::Advance(3), amount },
+                        crate::DocKind::BankOut => Body::BankOut { to: document::BankOut::Tax("68.01".into()), amount },
+                        crate::DocKind::Payroll => {
+                            Body::Payroll { account: "26".into(), lines: vec![(1, rub(120_000)), (2, rub(80_000)), (3, rub(75_000))] }
+                        }
+                        _ => continue,
+                    };
+                    b.add_posted(d(2, 10), body).unwrap();
+                }
+                Check::Balance { account, sub: Some(Sub::Counterparty(c)), .. } => {
+                    let owed = report::account_balance(&b, account, end, end)
+                        .iter()
+                        .find(|r| r.sub == Some(Sub::Counterparty(*c)))
+                        .map(|r| r.row.close_dt - r.row.close_kt)
+                        .unwrap();
+                    let body = if *account == "62" {
+                        Body::BankIn { from: document::BankIn::Customer(*c), amount: owed }
+                    } else {
+                        Body::BankOut { to: document::BankOut::Supplier(*c), amount: -owed }
+                    };
+                    b.add_posted(d(2, 20), body).unwrap();
+                }
+                Check::Closed { .. } => {
+                    b.add_posted(end, Body::MonthClose).unwrap();
+                }
+                _ => {}
+            }
+        }
+        for t in &tasks {
+            let answer = t.expected(&b);
+            assert_eq!(t.check(&b, answer), Ok(()), "seed {seed}: {}", t.title);
+            if t.asks_number() {
+                assert!(t.check(&b, answer.map(|a| a + Money(1))).is_err());
+            }
+        }
+    }
+}

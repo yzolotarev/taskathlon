@@ -1,9 +1,9 @@
 <h1 align="center">Taskathlon</h1>
 
 <p align="center">
-  <b>Тренажёр скорости и собеседований по Excel, SQL и бухучёту.</b><br>
-  Короткие уроки, рабочие кейсы, экспресс-тесты на время и спринты на рекорд.<br>
-  Внутри настоящий табличный редактор, а не картинка.
+  <b>A speed and job-interview trainer for Excel, SQL and accounting.</b><br>
+  Short lessons, real work cases, timed tests, sprints for personal records and a full accounting program to practise in.<br>
+  The spreadsheet inside is a real spreadsheet engine, not a picture of one.
 </p>
 
 <p align="center">
@@ -13,52 +13,66 @@
 </p>
 
 <p align="center">
-  <img src="docs/images/taskathlon-home.png" alt="Главный экран: путь из разделов, цель дня, задания дня, экспресс-тест" width="100%">
+  <img src="docs/images/taskathlon-home.png" alt="Home screen: the learning path, daily goal, daily quests and the timed test" width="100%">
 </p>
 
-## Зачем
+## Why
 
-Для тех, кто идёт на бухгалтера, офис-аналитика или финансиста и хочет, чтобы Excel и SQL работали «на автомате». Можно за день подготовиться к онлайн-тесту при отборе.
+For people applying for accountant, office analyst or finance roles who want Excel and SQL to become muscle memory, and who need to prepare for an online screening test in a day. The interface is currently in Russian; an English interface is in progress.
 
-## Что внутри
+## What's inside
 
-- 🧮 **Excel по-русски.** `=СУММЕСЛИ(A2:A9;"Самара";B2:B9)`, `$`, ВПР, ПРОСМОТРX, ИНДЕКС+ПОИСКПОЗ, даты, текст, сводные и горячие клавиши. Формулы считает движок GridCraft.
-- 🗄 **SQL.** 16 навыков от `SELECT` до оконных функций: пишешь запрос, видишь результат. Проверка идёт на других данных, поэтому подогнать ответ не получится.
-- 📒 **Бухучёт.** План счетов, проводки, НДС, зарплата, ОСВ.
-- 💼 **Рабочие кейсы и режим «Собеседование»:** письмо от руководителя, данные, таймер, разбор.
-- ⏱ **Экспресс-тест:** 15 вопросов, у каждого свой таймер. Excel, SQL или микс.
-- 🏁 **Спринт:** 10 заданий на секундомер, медали и личные рекорды.
-- ⚡ **Мотивация:** чем быстрее ответ, тем больше очков. Комбо, серия дней, цель дня, задания дня, кристаллы, заморозка серии, ставки на серию и достижения.
-- 🧠 **Адаптивность:** то, что уже знаешь, проходится быстрее («Я это знаю», перескок уровня). Ошибки возвращаются, а повторения идут по FSRS.
-- 🔔 **Напоминание** на рабочем столе через таймер systemd. Всё работает офлайн.
+- 🧮 **Excel.** References and `$`, SUMIF(S), VLOOKUP/XLOOKUP/INDEX+MATCH, dates, text, pivots and shortcuts, with Russian function names as in Russian Excel (`=СУММЕСЛИ(A2:A9;"Самара";B2:B9)`). Formulas are computed by the GridCraft engine.
+- 🗄 **SQL.** 16 skills from `SELECT` to window functions. Write a query and see the result. Answers are re-checked on different data, so you can't hard-code them.
+- 📒 **Accounting program.** A working double-entry ledger: catalogs, 13 document types with **Post / Unpost**, entries, month-end close, trial balance, account card, account analysis and P&L, plus a timed workshop of 11 tasks.
+- 💼 **Work cases and interview mode:** a brief from a manager, data, a timer and a debrief.
+- ⏱ **Timed test:** 15 questions, each with its own timer. Excel, SQL or mixed.
+- 🏁 **Sprint:** 10 real tasks against the stopwatch, with medals and personal records.
+- ⚡ **Motivation:** faster answers earn more points. Combos, streaks, a daily goal, daily quests, gems, streak freezes, streak wagers and 18 achievements.
+- 🧠 **Adaptivity:** what you already know goes faster ("I know this" test-outs and level jumps). Mistakes come back, and reviews are scheduled with FSRS.
+- 🔔 **Desktop reminder** through a systemd user timer. Everything works offline.
 
 <p align="center">
-  <img src="docs/images/taskathlon-sql.png" alt="SQL-задание" width="49%">
-  <img src="docs/images/taskathlon-blitz.png" alt="Экспресс-тест" width="49%">
+  <img src="docs/images/taskathlon-ledger.png" alt="Accounting program: document journal and entries" width="49%">
+  <img src="docs/images/taskathlon-trial-balance.png" alt="Trial balance" width="49%">
+</p>
+<p align="center">
+  <img src="docs/images/taskathlon-sql.png" alt="SQL task" width="49%">
+  <img src="docs/images/taskathlon-blitz.png" alt="Timed test" width="49%">
 </p>
 
-## Запуск
+## Run
 
-Нужен Rust 1.95+ ([rustup](https://rustup.rs)).
+You need Rust 1.95+ ([rustup](https://rustup.rs)).
 
 ```sh
 cargo run --release -p gridcraft-learn --bin taskathlon
 ```
 
-Нажми **Enter**, и урок начнётся. Прогресс сохраняется сам в `~/.local/share/gridcraft-learn/`.
+Press **Enter** to start a lesson. Progress is saved to `~/.local/share/gridcraft-learn/`.
 
-## Основано на GridCraft
+## Layout
 
-Taskathlon построен на **[GridCraft](https://github.com/storytold/gridcraft)**, открытом табличном редакторе на Rust от команды ArtCraft (MIT OR Apache-2.0). Движок формул, таблица и интерфейс ячеек взяты оттуда. Код тренажёра лежит в `crates/learn` и `apps/gridcraft-learn`, а исходный редактор GridCraft собирается как `cargo run -p gridcraft`.
+| Path | What |
+|---|---|
+| `crates/learn` | Learning runtime: content generators, grading, staircase, FSRS, quests, SQL grading |
+| `crates/ledger` | Accounting core: chart of accounts, catalogs, documents, posting, month close, reports, practice tasks |
+| `apps/gridcraft-learn` | The desktop app (binary `taskathlon`) |
+| everything else | GridCraft, the spreadsheet engine and UI it is built on |
 
-Taskathlon не является продуктом ArtCraft, и команда ArtCraft его не одобряла и не поддерживает. Что изменено относительно GridCraft, перечислено в [NOTICE](NOTICE).
+## Built on GridCraft
 
-## Права
+Taskathlon is built on **[GridCraft](https://github.com/storytold/gridcraft)**, an open-source spreadsheet written in Rust by the ArtCraft team (MIT OR Apache-2.0). The formula engine, the grid and the cell UI come from there, and the original spreadsheet still builds with `cargo run -p gridcraft`.
 
-- Лицензия: MIT или Apache-2.0 на выбор ([LICENSE-MIT](LICENSE-MIT), [LICENSE-APACHE](LICENSE-APACHE)).
-- Весь контент, маскот, звуки и цвета оригинальные. Ассеты сторонних вендоров не используются ([ATTRIBUTION.md](ATTRIBUTION.md)).
-- Excel является товарным знаком Microsoft, 1С является товарным знаком фирмы «1С». Taskathlon с ними не связан и не содержит их кода, иконок или шаблонов.
+Taskathlon is not made, sponsored or endorsed by the ArtCraft team. The changes made to GridCraft are listed in [NOTICE](NOTICE).
 
-## Документация
+## Legal
 
-[Как устроено](docs/learn/ARCHITECTURE.md) · [Адаптивная модель](docs/learn/ADAPTIVE_MODEL.md) · [Ограничения](docs/learn/KNOWN_LIMITATIONS.md) · [Прогресс](docs/learn/PROGRESS.md)
+- License: MIT or Apache-2.0, at your option ([LICENSE-MIT](LICENSE-MIT), [LICENSE-APACHE](LICENSE-APACHE)).
+- All content, the mascot, sounds and colours are original. No third-party vendor assets are used ([ATTRIBUTION.md](ATTRIBUTION.md)).
+- The accounting module is a clean-room implementation of public accounting rules (the Russian chart of accounts, PBU/FSBU and the Tax Code). It contains no code, forms, icons or templates from any commercial accounting product.
+- "Excel" is a trademark of Microsoft and "1C" is a trademark of 1C Company. Taskathlon is not affiliated with either.
+
+## Docs
+
+[Architecture](docs/learn/ARCHITECTURE.md) · [Adaptive model](docs/learn/ADAPTIVE_MODEL.md) · [Accounting module](docs/ledger/PLAN.md) · [Known limitations](docs/learn/KNOWN_LIMITATIONS.md) · [Progress](docs/learn/PROGRESS.md)

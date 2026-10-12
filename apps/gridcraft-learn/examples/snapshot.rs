@@ -37,6 +37,34 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             app.run_sql();
         }
+        "ledger" | "ledgerdoc" | "ledgertb" | "ledgercard" | "ledgerpractice" => {
+            let mut v = gridcraft_learn::ledger_ui::LedgerView::load(None);
+            match which.as_str() {
+                "ledgerdoc" => {
+                    let d = v.book.docs.iter().find(|d| d.body.kind() == gridcraft_ledger::DocKind::Sale).cloned();
+                    v.draft = d.map(|d| (d, false));
+                    v.section = gridcraft_learn::ledger_ui::Section::Sales;
+                }
+                "ledgerpractice" => {
+                    v.start_practice(7);
+                    if let Some(pr) = v.practice.as_mut() {
+                        pr.show_hint = true;
+                    }
+                }
+                "ledgertb" => v.section = gridcraft_learn::ledger_ui::Section::Reports,
+                "ledgercard" => {
+                    v.section = gridcraft_learn::ledger_ui::Section::Reports;
+                    v.report = gridcraft_learn::ledger_ui::ReportKind::Card;
+                    v.account = "62".into();
+                }
+                _ => {
+                    v.selected = v.book.docs.get(2).map(|d| d.id);
+                    v.show_entries = true;
+                }
+            }
+            app.ledger = Some(v);
+            app.screen = Screen::Ledger;
+        }
         "blitz" => {
             app.start_blitz(gridcraft_learn_core::quiz::Track::Mixed);
             app.blitz_answer(Some(0));

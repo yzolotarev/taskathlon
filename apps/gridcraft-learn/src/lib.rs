@@ -4,6 +4,7 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::todo, clippy::unimplemented, clippy::unreachable)]
 
 mod ai;
+pub mod ledger_ui;
 pub mod remind;
 mod screens;
 pub mod sound;
@@ -28,7 +29,7 @@ pub fn now() -> u64 {
 }
 
 #[expect(clippy::disallowed_methods, reason = "Clock belongs to the native-only desktop shell")]
-fn instant() -> Instant {
+pub(crate) fn instant() -> Instant {
     Instant::now()
 }
 
@@ -42,6 +43,7 @@ pub enum Screen {
     Stats,
     Blitz,
     BlitzReport,
+    Ledger,
 }
 
 /// A short message that floats in and fades (badges, quests, gems).
@@ -160,6 +162,8 @@ pub struct LearningApp {
     pub active: Option<Active>,
     pub feedback: Option<Feedback>,
     pub summary: Option<Summary>,
+    /// The accounting program, loaded on first open.
+    pub ledger: Option<ledger_ui::LedgerView>,
     /// When the summary screen opened (for its count-up animation).
     pub done_since: Option<f64>,
     pub report: Option<Report>,
@@ -226,6 +230,7 @@ impl LearningApp {
             active: None,
             feedback: None,
             summary: None,
+            ledger: None,
             done_since: None,
             report: None,
             notice,
@@ -986,6 +991,39 @@ impl LearningApp {
                     self.screen = Screen::Home;
                 }
                 screens::blitz_report(self, ui);
+            }
+            Screen::Ledger => {
+                let p = view::palette(self.profile.dark);
+                let path = self.path.as_ref().map(|p| p.with_file_name("ledger.json"));
+                let ledger = self.ledger.get_or_insert_with(|| ledger_ui::LedgerView::load(path));
+                let seed = self.profile.seed();
+                let out = ledger_ui::show(ledger, ui, &p, seed);
+                if out.back {
+                    self.screen = Screen::Home;
+                }
+                if let Some((secs, goal)) = out.solved {
+                    let change = self.profile.record_ledger_task(secs, goal, now());
+                    let t = self.time();
+                    let text = match change.speed {
+                        Speed::Lightning => "⚡ МОЛНИЯ!",
+                        Speed::Fast => "💨 БЫСТРО!",
+                        Speed::Normal => "✔ ВЕРНО!",
+                    };
+                    self.pop = Some(Pop { text: text.into(), color: egui::Color32::from_rgb(16, 185, 129), born: t });
+                    self.cue(if change.speed == Speed::Lightning { Cue::Lightning } else { Cue::Correct });
+                    self.celebrate(&change);
+                    let r = self.save();
+                    self.handle(r);
+                }
+                if out.failed {
+                    self.cue(Cue::Wrong);
+                }
+                if let Some((solved, total)) = out.finished {
+                    if solved * 10 >= total * 8 {
+                        self.pending_confetti = true;
+                    }
+                    self.cue(Cue::Complete);
+                }
             }
         }
         if self.show_settings {
