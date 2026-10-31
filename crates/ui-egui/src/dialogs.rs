@@ -891,7 +891,7 @@ pub fn show(app: &mut SheetApp, ctx: &egui::Context) {
         "solver" => 460.0,
         _ => 380.0,
     };
-    let window = egui::Window::new(d.title.clone())
+    let window = egui::Window::new(app.ui.language.tr(&d.title).to_string())
         .id(egui::Id::new("dialog").with(&d.name))
         .collapsible(false)
         .resizable(false)
@@ -1227,7 +1227,7 @@ fn ok_cancel(ui: &mut egui::Ui, confirm: &mut bool, open: &mut bool) {
         if ok.clicked() || ui.input(|i| i.key_pressed(Key::Enter)) {
             *confirm = true;
         }
-        if ui.button(" Cancel ").clicked() {
+        if ui.button(format!(" {} ", crate::i18n::current(ui.ctx()).tr("Cancel"))).clicked() {
             *open = false;
         }
     });
@@ -1745,34 +1745,100 @@ fn go_to(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, confirm: &mut bo
     }
 }
 
+/// Columns of the table around the active cell, as Excel's Sort dialog lists them: header text
+/// when the list has headers («Сумма»), otherwise «Столбец C». Third item: the column holds numbers.
+fn sort_columns(app: &SheetApp, header: bool, lang: crate::i18n::Language) -> (Vec<(String, String, bool)>, Option<String>) {
+    use gridcraft_engine::core::CellRef;
+    let Some(doc) = app.session.active() else { return (Vec::new(), None) };
+    let Some(sh) = doc.wb.active() else { return (Vec::new(), None) };
+    let at = doc.selection.active;
+    let filled = |r: u32, c: u32| !sh.value(CellRef::new(r, c)).is_empty();
+    // The contiguous block around the active cell (Excel's current region, rows and columns).
+    let (mut top, mut bottom, mut left, mut right) = (at.row, at.row, at.col, at.col);
+    loop {
+        let (l0, r0, t0, b0) = (left, right, top, bottom);
+        let row_has = |r: u32| (l0..=r0).any(|c| filled(r, c));
+        let col_has = |c: u32| (t0..=b0).any(|r| filled(r, c));
+        let mut grew = false;
+        if top > 0 && row_has(top - 1) {
+            top -= 1;
+            grew = true;
+        }
+        if bottom < 1_048_575 && row_has(bottom + 1) {
+            bottom += 1;
+            grew = true;
+        }
+        if left > 0 && col_has(left - 1) {
+            left -= 1;
+            grew = true;
+        }
+        if right < 16_383 && col_has(right + 1) {
+            right += 1;
+            grew = true;
+        }
+        if !grew || bottom - top > 100_000 {
+            break;
+        }
+    }
+    let first_data = if header { top + 1 } else { top };
+    let cols = (left..=right)
+        .map(|c| {
+            let letter = CellRef::new(0, c).a1().trim_end_matches(char::is_numeric).to_string();
+            let title = sh.value(CellRef::new(top, c));
+            let label = if header && !title.is_empty() { title.display() } else { lang.tr("Column {}").replace("{}", &letter) };
+            let numeric = (first_data..=bottom).filter(|r| filled(*r, c)).all(|r| !sh.value(CellRef::new(r, c)).is_text());
+            (letter, label, numeric)
+        })
+        .collect();
+    let active = CellRef::new(0, at.col).a1().trim_end_matches(char::is_numeric).to_string();
+    (cols, Some(active))
+}
+
 fn sort(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, confirm: &mut bool) {
+    let lang = app.ui.language;
     let mut header = d.values.get("header").and_then(Json::as_bool).unwrap_or(true);
-    ui.checkbox(&mut header, "My list has headers");
+    ui.checkbox(&mut header, lang.tr("My list has headers"));
     d.values.insert("header".into(), json!(header));
+    let (columns, active) = sort_columns(app, header, lang);
     let mut levels: Vec<Json> = d.values.get("levels").and_then(Json::as_array).cloned().unwrap_or_default();
+    // Opening the dialog: sort by the column the cursor is in, like Excel.
+    if !d.values.contains_key("primed") {
+        d.values.insert("primed".into(), json!(true));
+        if let (Some(first), Some(col)) = (levels.first_mut(), active.clone()) {
+            first["column"] = json!(col);
+        }
+    }
     let mut remove = None;
     for (i, lv) in levels.iter_mut().enumerate() {
         ui.horizontal(|ui| {
-            ui.label(if i == 0 { "Sort by" } else { "Then by" });
+            ui.label(lang.tr(if i == 0 { "Sort by" } else { "Then by" }));
             let mut col = lv["column"].as_str().unwrap_or("A").to_string();
-            ui.add(egui::TextEdit::singleline(&mut col).desired_width(50.0));
+            let shown = columns.iter().find(|(l, ..)| *l == col).map(|(_, t, _)| t.clone()).unwrap_or_else(|| col.clone());
+            egui::ComboBox::from_id_salt(("sort_col", i)).selected_text(shown).width(150.0).show_ui(ui, |ui| {
+                for (letter, label, _) in &columns {
+                    ui.selectable_value(&mut col, letter.clone(), label);
+                }
+            });
             lv["column"] = json!(col.to_ascii_uppercase());
+            let numeric = columns.iter().find(|(l, ..)| *l == col).is_some_and(|(_, _, n)| *n);
             let mut by = lv["by"].as_str().unwrap_or("values").to_string();
             egui::ComboBox::from_id_salt(("by", i))
-                .selected_text(match by.as_str() {
+                .selected_text(lang.tr(match by.as_str() {
                     "cellColor" => "Cell Color",
                     "fontColor" => "Font Color",
                     _ => "Cell Values",
-                })
+                }))
                 .show_ui(ui, |ui| {
-                    ui.selectable_value(&mut by, "values".into(), "Cell Values");
-                    ui.selectable_value(&mut by, "cellColor".into(), "Cell Color");
-                    ui.selectable_value(&mut by, "fontColor".into(), "Font Color");
+                    ui.selectable_value(&mut by, "values".into(), lang.tr("Cell Values"));
+                    ui.selectable_value(&mut by, "cellColor".into(), lang.tr("Cell Color"));
+                    ui.selectable_value(&mut by, "fontColor".into(), lang.tr("Font Color"));
                 });
             lv["by"] = json!(by);
             let mut desc = lv["order"].as_str() == Some("desc");
-            ui.radio_value(&mut desc, false, "A to Z");
-            ui.radio_value(&mut desc, true, "Z to A");
+            // Excel words the order by the column's type: numbers by size, text by alphabet.
+            let (up, down) = if numeric { ("Smallest to Largest", "Largest to Smallest") } else { ("A to Z", "Z to A") };
+            ui.radio_value(&mut desc, false, lang.tr(up));
+            ui.radio_value(&mut desc, true, lang.tr(down));
             lv["order"] = json!(if desc { "desc" } else { "asc" });
             if ui.small_button("✕").clicked() {
                 remove = Some(i);
@@ -1784,8 +1850,9 @@ fn sort(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, confirm: &mut boo
     {
         levels.remove(i);
     }
-    if ui.button("+ Add Level").clicked() {
-        levels.push(json!({"column": "B", "order": "asc"}));
+    if ui.button(lang.tr("+ Add Level")).clicked() {
+        let next = columns.first().map(|(l, ..)| l.clone()).unwrap_or_else(|| "A".into());
+        levels.push(json!({"column": next, "order": "asc"}));
     }
     d.values.insert("levels".into(), Json::Array(levels.clone()));
     let mut open = true;

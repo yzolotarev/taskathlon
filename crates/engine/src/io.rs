@@ -175,7 +175,17 @@ pub fn save_bytes(wb: &Workbook, path: &str) -> Result<Vec<u8>> {
 /// characters in each cell" (Microsoft Support, *Excel formatting and features that are not
 /// transferred to other file formats*): number formats applied, never column-width `#####`.
 fn csv(wb: &Workbook, sh: &Sheet, delimiter: u8) -> Vec<u8> {
-    gridcraft_xlsx::write_csv(sh, delimiter, |c| crate::display::value_text(wb, sh, c))
+    gridcraft_xlsx::write_csv(sh, delimiter, |c| {
+        // General numbers are written whole: the 11-character General display turns a 12-digit
+        // part code into «1.24412E+11», and that loss would be saved into the file for good.
+        if let gridcraft_core::Value::Number(n) = sh.value(c)
+            && n.is_finite()
+            && wb.styles.get(sh.style_id(c)).num_fmt.as_str().eq_ignore_ascii_case("General")
+        {
+            return format!("{n}");
+        }
+        crate::display::value_text(wb, sh, c)
+    })
 }
 
 fn esc(s: &str) -> String {

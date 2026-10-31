@@ -182,8 +182,30 @@ struct SortKey {
     list: Option<Vec<String>>,
 }
 
-fn quick_sort(s: &mut Session, p: &Json, asc: bool) -> Result<Json> {
+/// Sorting a single selected column that sits inside a wider table would tear its rows apart.
+/// Excel stops and offers «Expand the selection» (the default); without a dialog we take that
+/// default, unless the caller passes `"expand": false` to sort only the selection.
+fn sort_range(s: &Session, p: &Json) -> Result<RangeRef> {
     let r = data_range(s, p)?;
+    if p.get("range").is_some() || bool_param(p, "expand") == Some(false) || r.width() != 1 || r.is_single() {
+        return Ok(r);
+    }
+    let d = s.doc()?;
+    let sh = d.wb.active().ok_or(EngineError::NoDocument)?;
+    let region = current_region(sh, d.selection.active);
+    if region.width() > 1
+        && region.start.col <= r.start.col
+        && r.end.col <= region.end.col
+        && region.start.row <= r.start.row
+        && r.end.row <= region.end.row
+    {
+        return Ok(region);
+    }
+    Ok(r)
+}
+
+fn quick_sort(s: &mut Session, p: &Json, asc: bool) -> Result<Json> {
+    let r = sort_range(s, p)?;
     let col = col_param(p.get("column"), r.start.col).unwrap_or(s.doc()?.selection.active.col).clamp(r.start.col, r.end.col);
     let d = s.doc()?;
     let sh = d.wb.active().ok_or(EngineError::NoDocument)?;
@@ -192,7 +214,7 @@ fn quick_sort(s: &mut Session, p: &Json, asc: bool) -> Result<Json> {
 }
 
 fn sort(s: &mut Session, p: &Json) -> Result<Json> {
-    let r = data_range(s, p)?;
+    let r = sort_range(s, p)?;
     let d = s.doc()?;
     let sh = d.wb.active().ok_or(EngineError::NoDocument)?;
     let header = bool_param(p, "header").unwrap_or_else(|| guess_header(&d.wb, sh, r));

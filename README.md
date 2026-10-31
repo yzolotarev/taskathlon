@@ -75,4 +75,4 @@ Taskathlon is not made, sponsored or endorsed by the ArtCraft team. The changes 
 
 ## Docs
 
-[Architecture](docs/learn/ARCHITECTURE.md) · [Adaptive model](docs/learn/ADAPTIVE_MODEL.md) · [Accounting module](docs/ledger/PLAN.md) · [Known limitations](docs/learn/KNOWN_LIMITATIONS.md) · [Progress](docs/learn/PROGRESS.md)
+[Architecture](docs/learn/ARCHITECTURE.md) · [Adaptive model](docs/learn/ADAPTIVE_MODEL.md) · [Procurement curriculum](docs/learn/CURRICULUM_UPDATE.md) · [Accounting module](docs/ledger/PLAN.md) · [Known limitations](docs/learn/KNOWN_LIMITATIONS.md) · [Progress](docs/learn/PROGRESS.md)

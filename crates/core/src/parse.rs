@@ -217,6 +217,15 @@ fn parse_date(t: &str, sys: DateSystem) -> Option<(f64, &'static str)> {
         {
             return valid_ymd(sys, y, m, d).map(|s| (s, "yyyy-mm-dd"));
         }
+        // Dotted dates are day-first wherever they are written that way (12.03.2026 is
+        // 12 March), unlike the US slash form below.
+        if t.contains('.')
+            && !t.contains(['/', '-'])
+            && let (Some(d), Some(m), Some(y)) = (num(a), num(b), num(c))
+        {
+            let y = if c.len() <= 2 { if y < 30 { 2000 + y } else { 1900 + y } } else { y };
+            return valid_ymd(sys, y, m, d).map(|s| (s, "dd.mm.yyyy"));
+        }
         if let (Some(m), Some(d), Some(y)) = (num(a), num(b), num(c)) {
             let y = if c.len() <= 2 { if y < 30 { 2000 + y } else { 1900 + y } } else { y };
             return valid_ymd(sys, y, m, d).map(|s| (s, "m/d/yyyy"));
@@ -348,6 +357,10 @@ mod tests {
     fn dates_and_times() {
         assert_eq!(p("10/7/2026").value, Value::Number(46302.0));
         assert_eq!(p("2026-10-07").value, Value::Number(46302.0));
+        assert_eq!(p("07.10.2026").value, Value::Number(46302.0));
+        assert_eq!(p("7.10.26").value, Value::Number(46302.0));
+        assert_eq!(p("07.10.2026").format, Some("dd.mm.yyyy"));
+        assert_eq!(p("31.02.2026").value, Value::text("31.02.2026"));
         assert_eq!(p("7-Oct-2026").value, Value::Number(46302.0));
         assert_eq!(p("Oct 7, 2026").value, Value::Number(46302.0));
         assert_eq!(p("2/30/2026").value, Value::text("2/30/2026"));

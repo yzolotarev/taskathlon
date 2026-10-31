@@ -16,8 +16,86 @@ pub const SPRINT_LEN: usize = 10;
 pub const SPRINT_PENALTY: f32 = 10.0;
 /// Clean successes needed at levels 1, 2, 3 before the next level.
 const NEED: [u8; 3] = [2, 2, 3];
+/// Nested lookup/error-handling is the current interview-prep ladder: keep massed practice
+/// long enough for the typing pattern to become familiar before reducing scaffolding.
+/// `sprint`: before a dated goal the lookup ladder uses the ordinary thresholds; its massed
+/// repetitions are for the long course, not for the night before an interview.
+fn successes_needed(id: &str, level: u8, sprint: bool) -> u8 {
+    if !sprint && matches!(id, "lookup.error_observe" | "lookup.iferror.wrap" | "lookup.iferror.combine") {
+        match level {
+            1 | 2 => 5,
+            3 => 8,
+            _ => u8::MAX,
+        }
+    } else {
+        NEED.get(usize::from(level.saturating_sub(1))).copied().unwrap_or(u8::MAX)
+    }
+}
 /// Units each unit builds on (it opens when those are all at level 2+).
-const UNIT_NEEDS: [&[usize]; 12] = [&[], &[0], &[1], &[2], &[3], &[4], &[2], &[2], &[2], &[1], &[], &[]];
+/// Skills a supply/procurement assistant needs first (job-interview priority), in teaching
+/// order. The autopilot reaches each one through the path, never skipping its prerequisites.
+const GOAL: &[&str] = &[
+    "cond.sumif",
+    "cond.countif",
+    "supply.need",
+    "lookup.vlookup",
+    "check.reconcile",
+    // Hidden spaces show up in live data from tier 2: learn to find and remove them first.
+    "text.trim",
+    "check.spaces",
+    "data.filter",
+    "data.pivot",
+    "supply.overdue",
+    "choose.totals",
+    "lookup.error_observe",
+    "lookup.iferror.combine",
+    "choose.lookup",
+    "check.catalog",
+    "cond.sumifs",
+];
+
+/// The evening before the supply-assistant interview: once the goal skills are at «Сам», the
+/// sprint's «Продолжить» walks these in order (pivots from several exports, then the working
+/// week), one clean pass each, instead of cycling old reviews. Known basics → start at level 2.
+const ROUTE: &[(&str, u8)] = &[
+    // Pivots, smoothly: the steps by hand, rows × columns, then the manager's words.
+    ("data.pivot", 1),
+    ("data.pivot", 2),
+    ("data.pivot", 3),
+    ("orion.pivotread", 1),
+    ("orion.pivotread", 2),
+    ("data.pivot", 4),
+    ("orion.pivotread", 3),
+    ("orion.pivotread", 4),
+    // Several exports into one list, then one pivot.
+    ("asm.pivot", 1),
+    ("asm.pivot", 2),
+    ("asm.pivot", 3),
+    ("asm.pivot", 4),
+    ("orion.join", 1),
+    ("orion.join", 3),
+    // The working week.
+    ("orion.open", 2),
+    ("orion.overdue", 2),
+    ("orion.contact", 2),
+    ("orion.fx", 2),
+    ("orion.payweek", 2),
+    ("orion.prepay", 2),
+    ("orion.reconcile", 2),
+    ("orion.defects", 2),
+    ("orion.mrp", 2),
+    ("orion.moq", 2),
+    ("orion.reorder", 2),
+    ("orion.landed", 2),
+    ("orion.compare", 2),
+    ("orion.abc", 2),
+    ("orion.exam", 3),
+    // The real thing: a dozen sheets, several currencies, sales abroad.
+    ("orion.quarter", 1),
+    ("orion.quarter", 3),
+];
+
+const UNIT_NEEDS: [&[usize]; 14] = [&[], &[0], &[1], &[2], &[3], &[4], &[2], &[2], &[2], &[1], &[], &[], &[1], &[]];
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct SkillProgress {
@@ -32,6 +110,39 @@ pub struct SkillProgress {
     pub seconds: f32,
     pub hints: u32,
 }
+
+/// Live-data steps for one skill: how much entry dirt the next register carries.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct LiveProgress {
+    /// 1..=4; 0 in old saves means "not started" and reads as 1.
+    pub tier: u8,
+    pub clean: u8,
+    pub misses: u8,
+    pub attempts: u32,
+    pub passes: u32,
+    /// After two misses in a row the register rests until this time (unix seconds): the
+    /// learner gets a walkthrough, and the skill comes back on live data the next day.
+    #[serde(default)]
+    pub rest_until: u64,
+}
+
+/// How long a register rests after two misses in a row: back the next day.
+pub const LIVE_REST: u64 = 16 * 3600;
+
+/// How far the learner is from the interview goal.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GoalPlan {
+    pub percent: u8,
+    /// Correct, unassisted solutions still needed.
+    pub passes_left: u32,
+    /// With this learner's miss rate.
+    pub tasks_left: u32,
+    pub minutes_left: u32,
+}
+
+/// Unassisted live passes needed to add one more kind of dirt.
+pub const LIVE_STEP: u8 = 2;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Attempt {
@@ -64,6 +175,9 @@ pub struct InterviewResult {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Profile {
+    /// Preparation sprint toward a dated goal (a job interview), unix seconds; 0 = off. Until
+    /// then lessons serve only what moves toward the goal, then warm-up and confidence practice.
+    pub sprint_until: u64,
     pub xp: u32,
     /// Local day number → XP earned that day.
     pub days: BTreeMap<u64, u32>,
@@ -73,6 +187,8 @@ pub struct Profile {
     /// Hours east of UTC for day boundaries (Moscow by default).
     pub utc_offset: i64,
     pub skills: BTreeMap<String, SkillProgress>,
+    /// Observable performance, separate from memory scheduling and XP.
+    pub evidence: BTreeMap<String, crate::evidence::SkillEvidence>,
     pub cases: BTreeMap<String, CaseProgress>,
     /// Skills a failed case or interview sent back for practice.
     pub remediation: Vec<String>,
@@ -84,6 +200,24 @@ pub struct Profile {
     /// English interface instead of Russian.
     #[serde(default)]
     pub english: bool,
+    /// The one course position: the last learned skill id (`lookup.vlookup`,
+    /// `route.supply.3`, …). Persisted independently of the active exercise so the
+    /// unified course resumes where the learner stopped.
+    #[serde(default)]
+    pub cursor: Option<String>,
+    /// Section bookmark: the supply route's last stage, kept separately so entering the skill
+    /// line does not lose the route position. App-managed; core only stores it.
+    #[serde(default)]
+    pub supply_stage: Option<u8>,
+    /// Local-only action logging for later analysis; on unless the learner turns it off.
+    #[serde(default = "default_true")]
+    pub logging: bool,
+    /// Interface size in percent (75..=200); restored on startup.
+    #[serde(default = "default_100")]
+    pub interface_scale: u16,
+    /// Sheet zoom in percent; restored on startup.
+    #[serde(default = "default_100")]
+    pub sheet_zoom: u16,
     /// Currency for streak freezes and wagers.
     pub gems: u32,
     pub freezes: u8,
@@ -101,6 +235,8 @@ pub struct Profile {
     /// Daily reminder time (hour, minute), local.
     pub remind: Option<(u8, u8)>,
     pub sprints: Vec<SprintResult>,
+    /// Live-data progress per practised skill id (not the `live.` task id).
+    pub live: BTreeMap<String, LiveProgress>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -225,9 +361,18 @@ pub enum Speed {
     Lightning,
 }
 
+fn default_true() -> bool {
+    true
+}
+
+fn default_100() -> u16 {
+    100
+}
+
 impl Default for Profile {
     fn default() -> Self {
         Self {
+            sprint_until: 0,
             xp: 0,
             days: BTreeMap::new(),
             streak: 0,
@@ -235,6 +380,7 @@ impl Default for Profile {
             goal: 50,
             utc_offset: 3,
             skills: BTreeMap::new(),
+            evidence: BTreeMap::new(),
             cases: BTreeMap::new(),
             remediation: Vec::new(),
             log: Vec::new(),
@@ -243,6 +389,11 @@ impl Default for Profile {
             sound: true,
             dark: false,
             english: false,
+            cursor: None,
+            supply_stage: None,
+            logging: true,
+            interface_scale: 100,
+            sheet_zoom: 100,
             gems: 50,
             freezes: 0,
             frozen_days: Vec::new(),
@@ -258,6 +409,7 @@ impl Default for Profile {
             blitz: Vec::new(),
             remind: None,
             sprints: Vec::new(),
+            live: BTreeMap::new(),
         }
     }
 }
@@ -273,8 +425,12 @@ pub struct Change {
     pub speed: Speed,
     pub speed_bonus: u32,
     pub combo_bonus: u32,
+    /// Live data: the register now carries this many kinds of dirt.
+    pub live_up: Option<u8>,
     /// The skill jumped ahead because it was clearly already known.
     pub fast_track: bool,
+    /// Live data missed twice in a row: show the walkthrough; the register rests until tomorrow.
+    pub live_rest: bool,
     pub gems: u32,
     pub achievements: Vec<String>,
     pub quests_done: Vec<String>,
@@ -294,6 +450,8 @@ pub enum Slot {
     TestOut(String),
     /// Speed run at a fixed level so times are comparable.
     Sprint(String),
+    /// The just-practised skill on a hand-typed register (skill id, not the `live.` id).
+    Live(String),
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -316,6 +474,12 @@ pub struct Lesson {
     pub goal_total: f32,
     #[serde(default)]
     pub misses: u32,
+    /// Skills that already continued on live data in this lesson (once each).
+    #[serde(default)]
+    pub live_done: Vec<String>,
+    /// Skills the learner skipped in this lesson: not offered again until the next one.
+    #[serde(default)]
+    pub skipped: Vec<String>,
 }
 
 impl Lesson {
@@ -352,8 +516,44 @@ impl Profile {
         self.skills.get(id).map(|s| s.level).unwrap_or(0)
     }
 
+    /// Records the one course position (called when a task starts).
+    pub fn set_cursor(&mut self, id: &str) {
+        self.cursor = Some(id.to_string());
+    }
+
+    /// The autopilot's next skill: open remediation first, then due reviews, then the path
+    /// frontier. Case/route ids are ignored here; the app resolves those from `cursor`.
+    pub fn next_skill(&self, now: u64) -> Option<&'static str> {
+        // The sprint skips reviews outside the goal: name what «Продолжить» will really give.
+        if self.sprinting(now) {
+            if self.goal_reached() {
+                return self.route_left().first().copied().or_else(|| self.weakest_goal_at(self.sprint_until).first().copied());
+            }
+            let at_risk = self
+                .weakest_goal_at(self.sprint_until)
+                .into_iter()
+                .find(|id| self.skills.get(*id).is_some_and(|p| p.level >= 2 && p.card.reps > 0 && p.card.retrievability(self.sprint_until) < 0.9));
+            return at_risk.or_else(|| self.frontier());
+        }
+        if let Some(id) = self.remediation.iter().find(|id| SKILLS.iter().any(|s| s.id == id.as_str()))
+            && let Some(s) = SKILLS.iter().find(|s| s.id == id.as_str())
+        {
+            return Some(s.id);
+        }
+        if let Some(id) = self.due(now).first() {
+            return Some(*id);
+        }
+        self.frontier()
+    }
+
+    /// Extra practice (choosing a function, control checks, supply tasks) was added inside
+    /// units learners may have finished; it never closes a unit or the skills after it.
+    pub fn extra(id: &str) -> bool {
+        ["choose.", "check.", "supply.", "orion."].iter().any(|p| id.starts_with(p))
+    }
+
     fn unit_done(&self, unit: usize) -> bool {
-        SKILLS.iter().filter(|s| s.unit == unit).all(|s| self.level(s.id) >= 2)
+        SKILLS.iter().filter(|s| s.unit == unit && !Self::extra(s.id)).all(|s| self.level(s.id) >= 2)
     }
 
     pub fn unit_open(&self, unit: usize) -> bool {
@@ -367,7 +567,8 @@ impl Profile {
         if !self.unit_open(sk.unit) {
             return false;
         }
-        match i.checked_sub(1).and_then(|p| SKILLS.get(p)) {
+        // The previous core skill of the unit gates both the next core skill and any extra.
+        match SKILLS.get(..i).and_then(|before| before.iter().rev().find(|p| !Self::extra(p.id))) {
             Some(prev) if prev.unit == sk.unit => self.level(prev.id) >= 2 || self.skills.get(prev.id).is_some_and(|p| p.successes >= 2),
             _ => true,
         }
@@ -377,9 +578,51 @@ impl Profile {
         CASES.iter().find(|c| c.id == id).is_some_and(|c| c.requires.iter().all(|s| self.level(s) >= 2))
     }
 
-    /// The next skill to climb: first open skill below level 3 in path order.
+    /// Prefer independent execution before extending practised skills to work level. Within
+    /// open units the course heads for [`GOAL`] first, through whatever opens the next goal
+    /// skill; otherwise it follows the path in order.
     pub fn frontier(&self) -> Option<&'static str> {
-        SKILLS.iter().find(|s| self.unlocked(s.id) && self.level(s.id) < 3).map(|s| s.id)
+        self.frontier_excluding(&[])
+    }
+
+    /// The frontier without the skills skipped in the current lesson.
+    pub fn frontier_excluding(&self, skip: &[String]) -> Option<&'static str> {
+        self.toward_goal_excluding(skip).or_else(|| self.path_frontier_excluding(skip))
+    }
+
+    fn toward_goal(&self) -> Option<&'static str> {
+        self.toward_goal_excluding(&[])
+    }
+
+    fn toward_goal_excluding(&self, skip: &[String]) -> Option<&'static str> {
+        let skipped = |id: &str| skip.iter().any(|s| s == id);
+        for goal in GOAL {
+            let Some(at) = SKILLS.iter().position(|s| s.id == *goal) else { continue };
+            let Some(sk) = SKILLS.get(at) else { continue };
+            if !self.unit_open(sk.unit) {
+                continue;
+            }
+            if self.unlocked(sk.id) {
+                if self.level(sk.id) < 3 && !skipped(sk.id) {
+                    return Some(sk.id);
+                }
+                continue;
+            }
+            // Locked: the first core skill of its unit that still holds it back.
+            let blocker =
+                SKILLS.get(..at).into_iter().flatten().filter(|s| s.unit == sk.unit && !Self::extra(s.id)).find(|s| {
+                    self.unlocked(s.id) && self.level(s.id) < 2 && !self.skills.get(s.id).is_some_and(|p| p.successes >= 2) && !skipped(s.id)
+                });
+            if let Some(b) = blocker {
+                return Some(b.id);
+            }
+        }
+        None
+    }
+
+    fn path_frontier_excluding(&self, skip: &[String]) -> Option<&'static str> {
+        let open = |s: &&crate::content::Skill| self.unlocked(s.id) && !skip.iter().any(|x| x == s.id);
+        SKILLS.iter().filter(open).find(|s| self.level(s.id) < 3).or_else(|| SKILLS.iter().filter(open).find(|s| self.level(s.id) < 4)).map(|s| s.id)
     }
 
     pub fn due(&self, now: u64) -> Vec<&'static str> {
@@ -393,17 +636,130 @@ impl Profile {
         v.into_iter().map(|(id, _)| id).collect()
     }
 
-    pub fn plan_lesson(&mut self, now: u64, focus: Option<&str>) -> Lesson {
+    /// A step is done once a task of that skill at that level (or harder) was solved.
+    fn step_done(&self, id: &str, level: u8) -> bool {
+        self.log.iter().any(|a| a.skill == id && a.passed && a.level >= level)
+    }
+
+    /// Route steps still to pass, in order (only open skills); one slot per step.
+    fn route_left(&self) -> Vec<&'static str> {
+        ROUTE.iter().filter(|(id, l)| self.unlocked(id) && !self.step_done(id, *l)).map(|(id, _)| *id).collect()
+    }
+
+    /// The level the route serves a skill at: its first unfinished step.
+    fn route_level(&self, id: &str) -> Option<u8> {
+        ROUTE.iter().find(|(s, l)| *s == id && !self.step_done(s, *l)).map(|(_, l)| *l)
+    }
+
+    fn in_route(id: &str) -> bool {
+        ROUTE.iter().any(|(s, _)| *s == id)
+    }
+
+    /// Route levels apply while the interview route is what «Продолжить» walks.
+    fn sprinting_route(&self, id: &str) -> bool {
+        self.goal_reached() && self.route_level(id).is_some()
+    }
+
+    /// Inside the preparation sprint (before the dated goal).
+    pub fn sprinting(&self, now: u64) -> bool {
+        now < self.sprint_until
+    }
+
+    /// The interview goal is reached: every goal skill at «Сам».
+    pub fn goal_reached(&self) -> bool {
+        self.toward_goal().is_none() && GOAL.iter().all(|id| self.level(id) >= 3)
+    }
+
+    /// Goal skills ordered by how well FSRS expects them to be remembered at the deadline,
+    /// weakest first; skills below «Как на работе» before those already there.
+    fn weakest_goal_at(&self, at: u64) -> Vec<&'static str> {
+        let mut v: Vec<(&'static str, u8, f64)> = GOAL
+            .iter()
+            .filter(|id| self.unlocked(id))
+            .map(|id| (*id, self.level(id), self.skills.get(*id).map(|p| p.card.retrievability(at)).unwrap_or(0.0)))
+            .collect();
+        v.sort_by(|a, b| (a.1 >= 4).cmp(&(b.1 >= 4)).then(a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal)));
+        v.into_iter().map(|(id, ..)| id).collect()
+    }
+
+    /// Sprint lessons. Before the goal: one review of the goal skill most at risk of being
+    /// forgotten by the deadline, then only frontier work toward the goal. After it: every task
+    /// is a goal skill, weakest-remembered first, at its own level (raising them to «Как на
+    /// работе») — the morning warm-up and the practice for confidence.
+    fn plan_sprint_lesson(&mut self) -> Lesson {
         let len = 8usize;
         let mut queue = VecDeque::new();
-        let remedy: Vec<String> = self.remediation.drain(..).take(2).collect();
+        let at = self.sprint_until;
+        let route = self.route_left();
+        if self.goal_reached() && !route.is_empty() {
+            for id in route.into_iter().take(len) {
+                queue.push_back(Slot::Focus(id.into()));
+            }
+        } else if self.goal_reached() {
+            for id in self.weakest_goal_at(at).into_iter().cycle().take(len) {
+                queue.push_back(Slot::Focus(id.into()));
+            }
+        } else {
+            let at_risk = self
+                .weakest_goal_at(at)
+                .into_iter()
+                .find(|id| self.skills.get(*id).is_some_and(|p| p.level >= 2 && p.card.reps > 0 && p.card.retrievability(at) < 0.9));
+            if let Some(r) = at_risk {
+                queue.push_back(Slot::Review(r.into()));
+            }
+            while queue.len() < len {
+                queue.push_back(Slot::Frontier);
+            }
+        }
+        Lesson { total: queue.len(), queue, ..Lesson::default() }
+    }
+
+    pub fn plan_lesson(&mut self, now: u64, focus: Option<&str>) -> Lesson {
+        if focus.is_none() && self.sprinting(now) {
+            return self.plan_sprint_lesson();
+        }
+        let len = 8usize;
+        // A route node clicked on the map: that task first, then the rest of the route, no reviews.
+        if let Some(f) = focus
+            && Self::in_route(f)
+        {
+            let mut queue: VecDeque<Slot> = VecDeque::from([Slot::Focus(f.into())]);
+            for id in self.route_left().into_iter().skip_while(|id| *id != f).skip(1).take(len - 1) {
+                queue.push_back(Slot::Focus(id.into()));
+            }
+            return Lesson { total: queue.len(), queue, ..Lesson::default() };
+        }
+        let mut queue = VecDeque::new();
+        let target = focus.or_else(|| self.frontier());
+        let domain = |id: &str| {
+            if id.starts_with("sql.") {
+                1
+            } else if id.starts_with("acc.") {
+                2
+            } else {
+                0
+            }
+        };
+        let remedy: Vec<String> = self.remediation.iter().filter(|s| target.is_none_or(|id| domain(id) == domain(s))).take(2).cloned().collect();
+        self.remediation.retain(|s| !remedy.contains(s));
         for r in &remedy {
             queue.push_back(Slot::Retry(r.clone()));
         }
         let due = self.due(now);
-        let reviews: Vec<&str> = due.iter().copied().filter(|d| !remedy.iter().any(|r| r == d) && Some(*d) != focus).take(2).collect();
-        let mastered: Vec<&str> =
-            SKILLS.iter().filter(|s| self.level(s.id) >= 3 && !reviews.contains(&s.id) && Some(s.id) != focus).map(|s| s.id).collect();
+        let reviews: Vec<&str> = due
+            .iter()
+            .copied()
+            .filter(|d| !remedy.iter().any(|r| r == d) && Some(*d) != focus && target.is_none_or(|id| domain(id) == domain(d)))
+            .take(2)
+            .collect();
+        // Do not interrupt an Excel lesson with an unrelated SQL/accounting drill.
+        let mastered: Vec<&str> = SKILLS
+            .iter()
+            .filter(|s| {
+                self.level(s.id) >= 3 && !reviews.contains(&s.id) && Some(s.id) != focus && target.is_none_or(|id| domain(id) == domain(s.id))
+            })
+            .map(|s| s.id)
+            .collect();
         let mix = mastered.get((self.next_seed as usize).wrapping_mul(7) % mastered.len().max(1)).copied();
         if let Some(first) = reviews.first() {
             queue.push_back(Slot::Review((*first).into()));
@@ -434,20 +790,36 @@ impl Profile {
         self.next_seed.wrapping_mul(0x2545_f491).wrapping_add(self.next_seed)
     }
 
+    pub fn live_tier(&self, id: &str) -> u8 {
+        self.live.get(id).map(|p| p.tier.clamp(1, crate::content::live::TIERS)).unwrap_or(1)
+    }
+
     /// Resolves a lesson slot to a concrete exercise spec.
     pub fn spec_for(&mut self, slot: &Slot) -> Spec {
         let seed = self.seed();
+        if let Slot::Live(id) = slot {
+            return crate::content::live::spec(id, self.live_tier(id), seed, 1);
+        }
         let id = match slot {
             Slot::Frontier => self.frontier().map(str::to_string).unwrap_or_else(|| self.weakest()),
-            Slot::Review(s) | Slot::Mix(s) | Slot::Retry(s) | Slot::Focus(s) | Slot::TestOut(s) | Slot::Sprint(s) => s.clone(),
+            Slot::Review(s) | Slot::Mix(s) | Slot::Retry(s) | Slot::Focus(s) | Slot::TestOut(s) | Slot::Sprint(s) | Slot::Live(s) => s.clone(),
         };
         let level = match slot {
             Slot::TestOut(_) => self.level(&id).max(3),
             Slot::Sprint(_) => SPRINT_LEVEL,
+            // The route builds on basics already at «Сам»: no copying stage.
+            _ if self.sprinting_route(&id) => self.route_level(&id).unwrap_or(2),
             _ => self.level(&id).max(1),
         };
-        // A retry steps down one level so the second attempt is likely to succeed.
-        let level = if matches!(slot, Slot::Retry(_)) { level.saturating_sub(1).max(1) } else { level };
+        // After a miss, exactly one task one step easier (a retry is that step already); once it
+        // is solved the learner is back on level. A level drop after two misses is the step
+        // itself, so the two never stack: one miss costs about five tasks, not ten.
+        let pending_miss = self.skills.get(&id).is_some_and(|p| p.misses > 0);
+        let level = if matches!(slot, Slot::Retry(_)) || (pending_miss && !matches!(slot, Slot::TestOut(_) | Slot::Sprint(_))) {
+            level.saturating_sub(1).max(1)
+        } else {
+            level
+        };
         Spec::new(&id, level, seed)
     }
 
@@ -737,19 +1109,36 @@ impl Profile {
     /// Records a drill answer: the first evaluation of a task decides the grade.
     /// `combo` is the number of correct answers in a row before this one.
     pub fn record(&mut self, task: &Task, passed: bool, seconds: f32, hints: u32, combo: u32, test_out: bool, now: u64) -> Change {
+        if let Some(base) = crate::content::live::base(&task.spec.skill) {
+            return self.record_live(base, task, passed, seconds, hints, combo, now);
+        }
         let mut change = Change::default();
         let id = task.spec.skill.clone();
         let level = task.spec.level;
+        let sprint = self.sprinting(now);
         let p = self.skills.entry(id.clone()).or_default();
-        let first_ever = p.attempts == 0;
         if p.level == 0 {
-            p.level = 1;
+            // A route skill starts where it was served (level 2), not at copying.
+            p.level = if Self::in_route(&id) { level.clamp(1, 2) } else { 1 };
         }
         p.attempts = p.attempts.saturating_add(1);
         p.seconds += seconds.max(0.0);
         p.hints = p.hints.saturating_add(hints);
         let ratio = seconds / task.goal_seconds.max(1.0);
-        let speed = if !passed || hints > 0 {
+        // A shown example is support even without an explicit hint click.
+        let assisted = hints > 0 || task.example.is_some();
+        self.evidence.entry(id.clone()).or_default().observe(crate::evidence::Observation {
+            at: now,
+            passed,
+            assisted,
+            seconds,
+            target_seconds: task.goal_seconds,
+            variant: task.spec.layout.rotate_left(17) ^ task.spec.data,
+            independent: !assisted && level >= 3,
+            // A variant probe tests the formula, not the learner's transfer.
+            transfer: false,
+        });
+        let speed = if !passed || assisted || !seconds.is_finite() || seconds < 0.0 {
             Speed::Normal
         } else if ratio <= 0.4 {
             Speed::Lightning
@@ -761,7 +1150,7 @@ impl Profile {
         change.speed = speed;
         let grade = if !passed {
             Grade::Again
-        } else if hints > 0 {
+        } else if assisted {
             Grade::Hard
         } else if speed != Speed::Normal && level >= 2 {
             Grade::Easy
@@ -772,26 +1161,30 @@ impl Profile {
         let on_level = level >= p.level;
         if passed {
             p.successes = p.successes.saturating_add(1);
-            if p.best_seconds == 0.0 || seconds < p.best_seconds {
+            if seconds.is_finite() && seconds >= 0.0 && (p.best_seconds == 0.0 || seconds < p.best_seconds) {
                 p.best_seconds = seconds;
             }
             p.misses = 0;
-            if hints == 0 && test_out && p.level < 3 {
+            if !assisted && test_out && p.level < 3 {
                 // Skip-ahead check passed: the skill is known.
                 p.level = 3;
                 p.clean = 0;
                 change.level_up = Some(3);
                 change.fast_track = true;
-            } else if hints == 0 && first_ever && level == 1 && speed != Speed::Normal {
-                // Clearly familiar from the first try: jump past the copying stage.
-                p.level = 3;
-                p.clean = 0;
-                change.level_up = Some(3);
-                change.fast_track = true;
-            } else if hints == 0 && on_level {
-                // Understanding shows as speed: a fast clean answer counts double.
-                p.clean = p.clean.saturating_add(if speed == Speed::Normal { 1 } else { 2 });
-                let need = NEED.get(usize::from(p.level.saturating_sub(1))).copied().unwrap_or(u8::MAX);
+            } else if level == 1 && on_level && hints == 0 {
+                // Repeating examples opens supported practice, never independent mastery.
+                p.clean = p.clean.saturating_add(1);
+                if p.clean >= successes_needed(&id, 1, sprint) {
+                    p.level = 2;
+                    p.clean = 0;
+                    change.level_up = Some(2);
+                }
+            } else if !assisted && on_level {
+                // The lookup composition ladder counts each correct practice once; speed
+                // never shortcuts the repetitions that make the syntax automatic.
+                let massed = matches!(id.as_str(), "lookup.error_observe" | "lookup.iferror.wrap" | "lookup.iferror.combine");
+                p.clean = p.clean.saturating_add(if !massed && speed != Speed::Normal { 2 } else { 1 });
+                let need = successes_needed(&id, p.level, sprint);
                 if p.level < 4 && p.clean >= need {
                     p.level += 1;
                     p.clean = 0;
@@ -860,6 +1253,174 @@ impl Profile {
         change
     }
 
+    /// Whether the live register of a skill may be offered now (not resting after two misses).
+    pub fn live_ready(&self, skill: &str, now: u64) -> bool {
+        self.live.get(skill).is_none_or(|p| p.rest_until <= now)
+    }
+
+    /// Interview goal: how many goal skills are at level 3 («Сам») or higher, out of how many,
+    /// and the skill the course works on next to get there.
+    pub fn goal_progress(&self) -> (usize, usize, Option<&'static str>) {
+        let done = GOAL.iter().filter(|id| self.level(id) >= 3).count();
+        (done, GOAL.len(), self.toward_goal())
+    }
+
+    /// The whole way to the interview goal: every goal skill to level 3, everything that opens
+    /// it (earlier core skills of its unit, and of the units it needs) to level 2. Fixed for a
+    /// given curriculum, so the percentage only moves when the learner does.
+    fn goal_route(&self) -> Vec<(&'static str, u8)> {
+        self.route_to(GOAL)
+    }
+
+    /// The route to these goal skills (see [`Self::goal_route`]).
+    fn route_to(&self, goals: &[&str]) -> Vec<(&'static str, u8)> {
+        let mut route: Vec<(&'static str, u8)> = Vec::new();
+        let push = |id: &'static str, target: u8, route: &mut Vec<(&'static str, u8)>| match route.iter_mut().find(|(r, _)| *r == id) {
+            Some((_, t)) => *t = (*t).max(target),
+            None => route.push((id, target)),
+        };
+        let mut units: Vec<usize> = Vec::new();
+        for goal in goals {
+            let Some(at) = SKILLS.iter().position(|s| s.id == *goal) else { continue };
+            let Some(sk) = SKILLS.get(at) else { continue };
+            // Only the units a goal unit builds on must be finished, not the goal unit itself.
+            let mut stack: Vec<usize> = UNIT_NEEDS.get(sk.unit).copied().unwrap_or(&[]).to_vec();
+            while let Some(u) = stack.pop() {
+                if units.contains(&u) {
+                    continue;
+                }
+                units.push(u);
+                stack.extend(UNIT_NEEDS.get(u).copied().unwrap_or(&[]).iter().copied());
+            }
+            for before in SKILLS.get(..at).into_iter().flatten().filter(|s| s.unit == sk.unit && !Self::extra(s.id)) {
+                push(before.id, 2, &mut route);
+            }
+            push(sk.id, 3, &mut route);
+        }
+        // Units the goal units build on must be done (core skills at level 2).
+        for s in SKILLS.iter().filter(|s| !Self::extra(s.id) && units.contains(&s.unit)) {
+            push(s.id, 2, &mut route);
+        }
+        route
+    }
+
+    /// Clean passes still needed to lift a skill to `target` (the staircase thresholds).
+    fn passes_to(&self, id: &str, target: u8, sprint: bool) -> u32 {
+        let p = self.skills.get(id);
+        let level = p.map(|p| p.level).unwrap_or(0).max(1);
+        if self.level(id) >= target {
+            return 0;
+        }
+        let clean = u32::from(p.map(|p| p.clean).unwrap_or(0));
+        let total: u32 = (level..target).map(|l| u32::from(successes_needed(id, l, sprint))).sum();
+        total.saturating_sub(clean).max(1)
+    }
+
+    /// Progress toward the interview goal: percent done, clean passes left, and an estimate in
+    /// minutes from this learner's own pace (seconds per task and first-try success rate).
+    pub fn goal_plan(&self, now: u64) -> GoalPlan {
+        let sprint = self.sprinting(now);
+        let route = self.goal_route();
+        let from_zero: u32 = route.iter().map(|(id, t)| (1..*t).map(|l| u32::from(successes_needed(id, l, sprint))).sum::<u32>()).sum();
+        // What is left leads only to goal skills not reached yet: steps toward a goal skill
+        // already at «Сам» (sorting before a mastered pivot) are no longer on the way.
+        let open: Vec<&str> = GOAL.iter().copied().filter(|g| self.level(g) < 3).collect();
+        let left: u32 = self.route_to(&open).iter().map(|(id, t)| self.passes_to(id, *t, sprint)).sum();
+        // Pace from real attempts; quick skips (under 8 s) are not attempts.
+        let recent: Vec<&Attempt> = self.log.iter().rev().filter(|a| a.seconds >= 8.0).take(60).collect();
+        let (secs, rate) = if recent.len() >= 10 {
+            // Mean with long breaks capped at 3 minutes: close to the real active time per task.
+            let secs = recent.iter().map(|a| f64::from(a.seconds.clamp(8.0, 180.0))).sum::<f64>() / recent.len() as f64;
+            let rate = recent.iter().filter(|a| a.passed).count() as f64 / recent.len() as f64;
+            (secs, rate)
+        } else {
+            (60.0, 0.7)
+        };
+        // Each miss costs about one more task on top of the redo (the easier step after a miss);
+        // outside the sprint, reviews and mixing take roughly half of a lesson.
+        let overhead = if sprint { 1.15 } else { 2.0 };
+        let tasks = f64::from(left) * (1.0 + 2.0 * (1.0 - rate.clamp(0.3, 1.0))) * overhead;
+        GoalPlan {
+            percent: if from_zero == 0 { 100 } else { (100 - (u64::from(left) * 100 / u64::from(from_zero)).min(100)) as u8 },
+            passes_left: left,
+            tasks_left: tasks.ceil() as u32,
+            minutes_left: (tasks * secs / 60.0).ceil() as u32,
+        }
+    }
+
+    /// Live data moves its own dirt tier only: a messy register is transfer evidence for the
+    /// skill, but it never pushes the clean-drill staircase or its review schedule.
+    #[allow(clippy::too_many_arguments)]
+    fn record_live(&mut self, base: &str, task: &Task, passed: bool, seconds: f32, hints: u32, combo: u32, now: u64) -> Change {
+        let mut change = Change::default();
+        let assisted = hints > 0;
+        let p = self.live.entry(base.to_string()).or_default();
+        p.tier = p.tier.clamp(1, crate::content::live::TIERS);
+        p.attempts = p.attempts.saturating_add(1);
+        let on_tier = task.spec.level >= p.tier;
+        if passed {
+            p.passes = p.passes.saturating_add(1);
+            p.misses = 0;
+            if !assisted && on_tier {
+                p.clean = p.clean.saturating_add(1);
+                if p.clean >= LIVE_STEP && p.tier < crate::content::live::TIERS {
+                    p.tier += 1;
+                    p.clean = 0;
+                    change.live_up = Some(p.tier);
+                }
+            }
+        } else {
+            p.clean = 0;
+            p.misses = p.misses.saturating_add(1);
+            if p.misses >= 2 {
+                // Looping on the same kind of register teaches little: explain it, rest it.
+                p.rest_until = now.saturating_add(LIVE_REST);
+                change.live_rest = true;
+                if p.tier > 1 {
+                    p.tier -= 1;
+                    change.level_down = true;
+                }
+                p.misses = 0;
+            }
+        }
+        // A due review answered on live data counts as that review.
+        if passed
+            && !assisted
+            && let Some(sp) = self.skills.get_mut(base)
+            && sp.card.reps > 0
+            && sp.card.due <= now
+        {
+            sp.card.review(Grade::Good, now);
+        }
+        self.evidence.entry(base.to_string()).or_default().observe(crate::evidence::Observation {
+            at: now,
+            passed,
+            assisted,
+            seconds,
+            target_seconds: task.goal_seconds,
+            variant: task.spec.layout.rotate_left(17) ^ task.spec.data,
+            independent: !assisted,
+            // An unfamiliar hand-typed register is what transfer means here.
+            transfer: true,
+        });
+        let mut xp = 0;
+        if passed {
+            change.combo_bonus = combo.min(5) * 2;
+            xp = (14 + 4 * u32::from(task.spec.level)).saturating_sub(3 * hints).max(3) + change.combo_bonus;
+        }
+        self.add_xp(xp, now, &mut change);
+        change.xp = xp;
+        if passed {
+            self.quest(QuestKind::Combo, combo + 1, now, &mut change);
+            self.best_combo = self.best_combo.max(combo + 1);
+        }
+        self.log.push(Attempt { skill: task.spec.skill.clone(), level: task.spec.level, at: now, seconds, hints, passed, mode: task.mode });
+        if self.log.len() > 5000 {
+            self.log.drain(..self.log.len() - 5000);
+        }
+        change
+    }
+
     /// Records a submitted case or interview; missed criteria send their skills back.
     pub fn record_case(&mut self, task: &Task, eval: &Evaluation, seconds: f32, interview: Option<u32>, now: u64) -> Change {
         let mut change = Change::default();
@@ -873,12 +1434,15 @@ impl Profile {
                 missed.push(o.skill.clone());
             }
         }
+        let mut reviewed = Vec::new();
         for o in &eval.outcomes {
             if let Some(p) = self.skills.get_mut(&o.skill)
                 && p.card.reps > 0
                 && !missed.contains(&o.skill)
+                && !reviewed.contains(&o.skill)
             {
                 p.card.review(Grade::Good, now);
+                reviewed.push(o.skill.clone());
             }
         }
         for m in &missed {

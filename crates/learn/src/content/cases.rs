@@ -71,6 +71,14 @@ pub const CASES: &[CaseDef] = &[
         build: purchase,
     },
     CaseDef {
+        id: "case.procurement",
+        title: "Реестр закупок: от каталога до отчёта",
+        role: "Специалист по снабжению",
+        minutes: 35,
+        requires: &["start.mul", "refs.fill", "refs.abs", "lookup.vlookup", "cond.sumif", "data.pivot"],
+        build: procurement,
+    },
+    CaseDef {
         id: "case.stock",
         title: "Остатки на складе",
         role: "Офис-аналитик / склад",
@@ -877,4 +885,232 @@ pub fn retail(g: &mut Gen) -> Result<Task> {
         ts("H1 — лучший магазин; H2 — его доля в общей выручке (число или %).").into(),
     ];
     Ok(finish(g, "case.retail", brief, &deliverables, "E2".into()))
+}
+
+/// One-sheet procurement workbook. Reference totals deliberately use only source
+/// columns: the grading probe does not contain the learner's answer formulas.
+pub fn procurement(g: &mut Gen) -> Result<Task> {
+    let n = size(g, 12);
+    let last = n + 1;
+    let suppliers = g.l.sample(PARTIES, 3);
+    let statuses = [ts("Заказан"), ts("Получен")];
+    g.setup.header(1, 0, &[ts("Заказ"), ts("Артикул"), ts("Количество"), ts("Цена"), ts("Поставщик"), ts("Статус"), ts("Сумма")]);
+    g.setup.header(1, 8, &[ts("Артикул"), ts("Товар"), ts("Цена"), ts("Поставщик")]);
+    for (col, width) in [
+        (0, 100.0),
+        (1, 100.0),
+        (2, 100.0),
+        (3, 100.0),
+        (4, 170.0),
+        (5, 110.0),
+        (6, 120.0),
+        (8, 100.0),
+        (9, 170.0),
+        (10, 100.0),
+        (11, 170.0),
+        (13, 230.0),
+        (14, 130.0),
+    ] {
+        g.setup.width(col, width);
+    }
+    // Stable keys and category labels; price, quantity and order mix vary by data
+    // seed. Every supplier/status combination appears, including repeated SKUs.
+    let mut catalog_prices = Vec::new();
+    let mut independent_total = 0.0;
+    for i in 0..6u32 {
+        let r = i + 2;
+        g.setup.input(a1(r, 8), Cell::Text(format!("SKU-{:03}", i + 1)));
+        g.setup.input(a1(r, 9), Cell::Text(ts(PRODUCTS[i as usize % PRODUCTS.len()]).into()));
+        let price = g.d.amount(100, 8_000, 10);
+        catalog_prices.push(price);
+        g.setup.input(a1(r, 10), Cell::Num(price));
+        g.setup.input(a1(r, 11), Cell::Text(suppliers[i as usize % suppliers.len()].into()));
+    }
+    for i in 0..n {
+        let r = i + 2;
+        let sku = if i < 6 { i } else { g.d.below(6) as u32 };
+        let status = if i < 6 { (i / 3) as usize } else { g.d.below(2) };
+        g.setup.input(a1(r, 0), Cell::Text(format!("PO-{:03}", i + 1)));
+        g.setup.input(a1(r, 1), Cell::Text(format!("SKU-{:03}", sku + 1)));
+        let quantity = g.d.int(1, 35) as f64;
+        independent_total += catalog_prices[sku as usize] * quantity;
+        g.setup.input(a1(r, 2), Cell::Num(quantity));
+        g.setup.input(a1(r, 5), Cell::Text(statuses[status].into()));
+        for col in [3, 4, 6] {
+            g.setup.answer(a1(r, col));
+        }
+        for (col, skill, reference) in [
+            (3, "lookup.vlookup", format!("=VLOOKUP(B{r},$I$2:$L$7,3,FALSE)")),
+            (4, "lookup.vlookup", format!("=VLOOKUP(B{r},$I$2:$L$7,4,FALSE)")),
+            (6, "start.mul", format!("=VLOOKUP(B{r},$I$2:$L$7,3,FALSE)*C{r}")),
+        ] {
+            push(g, skill, &tr(&format!("{} — строка {r}", a1(r, col))), Kind::Formula { cell: a1(r, col), reference, live: true });
+        }
+    }
+    g.setup.formats.push((format!("D2:D{last}"), "#,##0.00".into()));
+    g.setup.formats.push((format!("G2:G{last}"), "#,##0.00".into()));
+    g.setup.header(1, 13, &[ts("Поставщик"), ts("Сумма закупок")]);
+    for (i, supplier) in suppliers.iter().enumerate() {
+        let r = i as u32 + 2;
+        // Criteria are source data so live probes retain their identity.
+        g.setup.input(a1(r, 13), Cell::Text((*supplier).into()));
+        g.setup.answer(a1(r, 14));
+        let terms = (2..=last)
+            .map(|order| format!("IF(VLOOKUP(B{order},$I$2:$L$7,4,FALSE)=N{r},VLOOKUP(B{order},$I$2:$L$7,3,FALSE)*C{order},0)"))
+            .collect::<Vec<_>>();
+        push(
+            g,
+            "cond.sumif",
+            &tr(&format!("Закупки поставщика (O{r})")),
+            Kind::Formula { cell: a1(r, 14), reference: format!("=SUM({})", terms.join(",")), live: true },
+        );
+    }
+    g.setup.text("N7", ts("Общая сумма"));
+    g.setup.answer("O7");
+    let terms = (2..=last).map(|r| format!("VLOOKUP(B{r},$I$2:$L$7,3,FALSE)*C{r}")).collect::<Vec<_>>();
+    push(g, "fn.sum", ts("Общая сумма (O7)"), Kind::Formula { cell: "O7".into(), reference: format!("=SUM({})", terms.join(",")), live: true });
+    push(
+        g,
+        "fn.sum",
+        ts("Независимый контроль бюджета"),
+        Kind::Expected { cell: "O7".into(), expected: crate::check::Expectation::Number(independent_total), formula: true },
+    );
+    let mut pairs = Vec::new();
+    for supplier in &suppliers {
+        for status in statuses {
+            let label = format!("{supplier} / {status}");
+            let terms = (2..=last)
+                .map(|r| format!("IF(AND(VLOOKUP(B{r},$I$2:$L$7,4,FALSE)=\"{supplier}\",F{r}=\"{status}\"),VLOOKUP(B{r},$I$2:$L$7,3,FALSE)*C{r},0)"))
+                .collect::<Vec<_>>();
+            pairs.push((label, format!("=SUM({})", terms.join(","))));
+        }
+    }
+    // Pairs validates numerical output by any method, NOT pivot provenance.
+    push(g, "cond.sumifs", ts("Контрольный срез: поставщик / статус"), Kind::Pairs { pairs });
+    push(
+        g,
+        "data.pivot",
+        ts("Настоящая сводная: поставщик × статус"),
+        Kind::Pivot {
+            sheet: "Sheet1".into(),
+            source: format!("A1:G{last}"),
+            rows: vec![ts("Поставщик").into()],
+            columns: vec![ts("Статус").into()],
+            values: vec![(ts("Сумма").into(), gridcraft_engine::model::PivotFunc::Sum)],
+        },
+    );
+    let brief = Brief {
+        from: ts("Руководитель отдела снабжения").into(),
+        subject: ts("Закупки к еженедельной планёрке").into(),
+        body: ts("В A:G — заказы, в I:L — каталог. Подтяни цену и поставщика по точному артикулу, рассчитай суммы и подготовь отчёт по поставщикам и статусам. Книга должна пересчитываться при изменении цены или количества. Исходные данные не меняй.").into(),
+    };
+    let deliverables = vec![
+        tr(&format!("D2:D{last} и E2:E{last} — цена и поставщик из каталога, живыми формулами точного поиска.")),
+        tr(&format!("G2:G{last} — цена × количество; напиши первую формулу и протяни вниз.")),
+        ts("O2:O4 — суммы по поставщикам через СУММЕСЛИ; O7 — общий итог. Проверь, что сумма O2:O4 равна O7.").into(),
+        ts("В свободной области Q1 создай настоящую сводную: строки — поставщик, столбцы — статус; значения — сумма закупок (СУММА, не СЧЁТ). Источник — весь реестр A:G вместе с заголовками.").into(),
+        ts("Для независимого числового контроля рядом выведи шесть строк «поставщик / статус» и сумму справа. Можно использовать формулы. Проверяются конфигурация настоящей сводной и контрольные суммы; обновление сводной проверяется отдельно.").into(),
+    ];
+    Ok(finish(g, "case.procurement", brief, &deliverables, "D2".into()))
+}
+
+#[cfg(test)]
+mod procurement_tests {
+    use super::*;
+    use crate::{Spec, sheet};
+    use gridcraft_engine::core::Value;
+
+    fn source_num(task: &Task, cell: &str) -> f64 {
+        match task.setup.value_of(cell).unwrap() {
+            Cell::Num(n) => *n,
+            other => panic!("not numeric: {other:?}"),
+        }
+    }
+
+    fn source_text<'a>(task: &'a Task, cell: &str) -> &'a str {
+        match task.setup.value_of(cell).unwrap() {
+            Cell::Text(s) => s,
+            other => panic!("not text: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn procurement_references_match_independent_arithmetic() {
+        for seed in [1, 19, 913] {
+            for level in [1, 4] {
+                let task = procurement(&mut Gen::new(&Spec::new("case.procurement", level, seed))).unwrap();
+                let last = size(&Gen::new(&task.spec), 12) + 1;
+                let mut amounts = BTreeMap::new();
+                let mut by_supplier: BTreeMap<String, f64> = BTreeMap::new();
+                let mut by_pair: BTreeMap<String, f64> = BTreeMap::new();
+                let mut prices = BTreeMap::new();
+                let mut suppliers = BTreeMap::new();
+                for r in 2..=last {
+                    let sku = source_text(&task, &a1(r, 1));
+                    let cat = (2..=7).find(|c| source_text(&task, &a1(*c, 8)) == sku).unwrap();
+                    let price = source_num(&task, &a1(cat, 10));
+                    let supplier = source_text(&task, &a1(cat, 11));
+                    let amount = price * source_num(&task, &a1(r, 2));
+                    prices.insert(a1(r, 3), price);
+                    suppliers.insert(a1(r, 4), supplier.to_string());
+                    amounts.insert(a1(r, 6), amount);
+                    *by_supplier.entry(supplier.into()).or_default() += amount;
+                    *by_pair.entry(format!("{supplier} / {}", source_text(&task, &a1(r, 5)))).or_default() += amount;
+                }
+                assert_eq!(by_pair.len(), 6);
+                let total: f64 = amounts.values().sum();
+                assert_eq!(total, by_supplier.values().sum::<f64>());
+                for check in &task.checks {
+                    match &check.kind {
+                        Kind::Formula { cell, reference, live } => {
+                            assert!(*live);
+                            let expected = if let Some(supplier) = suppliers.get(cell) {
+                                Value::text(supplier.as_str())
+                            } else {
+                                let n = if cell == "O7" {
+                                    total
+                                } else if cell.starts_with('O') {
+                                    by_supplier[source_text(&task, &cell.replace('O', "N"))]
+                                } else {
+                                    prices.get(cell).or_else(|| amounts.get(cell)).copied().unwrap()
+                                };
+                                Value::number(n)
+                            };
+                            let got = sheet::probe(&task.setup, &[reference.as_str()]).unwrap();
+                            assert!(crate::check::equivalent(&got[0], &expected), "{cell}: {got:?} != {expected:?}");
+                        }
+                        Kind::Pairs { pairs } => {
+                            for (label, reference) in pairs {
+                                let got = sheet::probe(&task.setup, &[reference.as_str()]).unwrap();
+                                assert!(crate::check::equivalent(&got[0], &Value::number(by_pair[label])));
+                            }
+                        }
+                        Kind::Pivot { rows, columns, values, .. } => {
+                            assert_eq!(rows, &vec![ts("Поставщик").to_string()]);
+                            assert_eq!(columns, &vec![ts("Статус").to_string()]);
+                            assert_eq!(values.len(), 1);
+                        }
+                        Kind::Expected { expected: crate::check::Expectation::Number(value), .. } => assert_eq!(*value, total),
+                        _ => panic!("unexpected check"),
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn procurement_is_seeded_and_answers_are_not_prefilled() {
+        let spec = Spec::new("case.procurement", 2, 71);
+        let a = procurement(&mut Gen::new(&spec)).unwrap();
+        let b = procurement(&mut Gen::new(&spec)).unwrap();
+        assert_eq!(a.setup.cells, b.setup.cells);
+        assert_eq!(a.checks, b.checks);
+        assert!(a.setup.answers.iter().all(|cell| a.setup.value_of(cell).is_none()));
+        let mut changed = spec;
+        changed.data += 7919;
+        let c = procurement(&mut Gen::new(&changed)).unwrap();
+        assert_ne!(a.setup.cells, c.setup.cells);
+        assert_eq!(a.setup.answers, c.setup.answers);
+        assert!(a.checks.iter().all(|check| crate::content::skill(&check.skill).is_some()));
+    }
 }

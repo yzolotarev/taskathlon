@@ -494,6 +494,7 @@ fn fallback_faces(han: HanOrder) -> Vec<(&'static str, Vec<(String, u32)>)> {
         ("sys-hebrew", hebrew()),
         ("sys-symbols", symbols()),
         ("sys-symbols-2", symbols_more()),
+        ("sys-symbols-3", symbols_technical()),
     ]
 }
 
@@ -663,6 +664,20 @@ fn symbols_more() -> Vec<(String, u32)> {
     v
 }
 
+/// A third face for keyboard symbols the first two lack (⌃ Control, ⌥ Option): Noto Sans Math
+/// or GNOME's Adwaita Sans, whichever the system has.
+#[cfg(not(target_arch = "wasm32"))]
+fn symbols_technical() -> Vec<(String, u32)> {
+    let mut v: Vec<(String, u32)> = Vec::new();
+    for d in ["/usr/share/fonts/noto", "/usr/share/fonts/truetype/noto", "/usr/share/fonts/opentype/noto", "/usr/local/share/fonts/noto"] {
+        v.push((format!("{d}/NotoSansMath-Regular.ttf"), 0));
+    }
+    for d in ["/usr/share/fonts/Adwaita", "/usr/share/fonts/adwaita-sans-fonts", "/usr/share/fonts/truetype/adwaita"] {
+        v.push((format!("{d}/AdwaitaSans-Regular.ttf"), 0));
+    }
+    v
+}
+
 /// Whether any symbol fallback face is installed (tests skip their glyph checks without one).
 pub fn symbol_face_installed() -> bool {
     #[cfg(not(target_arch = "wasm32"))]
@@ -815,11 +830,11 @@ mod tests {
         let keys = |han| fallback_faces(han).into_iter().map(|(k, _)| k).collect::<Vec<_>>();
         assert_eq!(
             keys(HanOrder::Japanese),
-            ["sys-cjk-han-ja", "sys-cjk-han-zh", "sys-cjk-hangul", "sys-thai", "sys-hebrew", "sys-symbols", "sys-symbols-2"]
+            ["sys-cjk-han-ja", "sys-cjk-han-zh", "sys-cjk-hangul", "sys-thai", "sys-hebrew", "sys-symbols", "sys-symbols-2", "sys-symbols-3"]
         );
         assert_eq!(
             keys(HanOrder::Chinese),
-            ["sys-cjk-han-zh", "sys-cjk-han-ja", "sys-cjk-hangul", "sys-thai", "sys-hebrew", "sys-symbols", "sys-symbols-2"]
+            ["sys-cjk-han-zh", "sys-cjk-han-ja", "sys-cjk-hangul", "sys-thai", "sys-hebrew", "sys-symbols", "sys-symbols-2", "sys-symbols-3"]
         );
         assert_eq!(HanOrder::of(Language::Ja), HanOrder::Japanese);
         for l in [Language::En, Language::Zh, Language::Ko, Language::Ru, Language::PtBr, Language::De, Language::Cs] {

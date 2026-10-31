@@ -1,5 +1,11 @@
 # Master prompt acceptance mapping
 
+This table records the original milestone, not an acceptance certificate for the
+current curriculum. The procurement update has additional gates in
+[CURRICULUM_UPDATE.md](CURRICULUM_UPDATE.md). Counts and bootstrap scheduling
+statements below are historical; current content and scheduler behavior must be
+checked against source and executable tests.
+
 | Scenario | Current evidence / gap |
 |---|---|
 | 1 First learner | First formula typed in actual GridCraft grid and checked in UI test; no independent human usability study |

@@ -30,6 +30,20 @@ pub(crate) fn canonical(
         }
         return Ok(format!("={}", formula::print(&expr?)));
     }
+    // With a decimal comma a dot means a date, as in Excel there: 12.03 is 12 March of this
+    // year and 12.03.2026 is day-first. Dotted digits that are not a date stay text.
+    if locale.decimal_separator() == ',' {
+        let t = body.trim();
+        let parts: Vec<&str> = t.split('.').collect();
+        let digits = |p: &&str| !p.is_empty() && p.len() <= 4 && p.chars().all(|c| c.is_ascii_digit());
+        if (parts.len() == 2 || parts.len() == 3) && parts.iter().all(digits) {
+            let n = |i: usize| parts.get(i).and_then(|p| p.parse::<u32>().ok()).unwrap_or(0);
+            if (1..=31).contains(&n(0)) && (1..=12).contains(&n(1)) && parts.get(2).is_none_or(|y| y.len() == 2 || y.len() == 4) {
+                return Ok(if parts.len() == 2 { format!("{t}.{}", gridcraft_engine::core::parse::current_year()) } else { t.to_string() });
+            }
+            return Ok(text.to_string());
+        }
+    }
     // Decimal-comma number entry follows the same preference, without rewriting text or dates.
     let normalized = body.trim().replace(locale.decimal_separator(), ".");
     let number = normalized.strip_suffix('%').unwrap_or(&normalized);
@@ -109,4 +123,28 @@ pub(crate) fn display_template(text: &str, locale: FormulaLocale, wb: &Workbook,
         return format!("={}(", completion_name(name, locale, wb, sheet));
     }
     display(text, locale, wb, sheet)
+}
+
+#[cfg(test)]
+mod dotted_entry_tests {
+    use super::*;
+
+    fn entered(text: &str) -> String {
+        let mut s = gridcraft_engine::Session::new();
+        s.new_workbook();
+        let wb = s.doc().expect("doc").wb.clone();
+        canonical(text, FormulaLocale::Ru, &wb, 0, gridcraft_engine::core::CellRef::new(0, 0)).expect("canonical")
+    }
+
+    #[test]
+    fn a_dot_is_a_day_first_date_with_a_decimal_comma() {
+        let year = gridcraft_engine::core::parse::current_year();
+        assert_eq!(entered("12.03"), format!("12.03.{year}"));
+        assert_eq!(entered("12.03.2026"), "12.03.2026");
+        assert_eq!(entered("1200,5"), "1200.5");
+        assert_eq!(entered("35.20"), "35.20");
+        assert_eq!(entered("1.2.3.4"), "1.2.3.4");
+        let parsed = gridcraft_engine::core::parse::parse_input(&entered("12.03.2026"), gridcraft_engine::core::DateSystem::default());
+        assert_eq!(parsed.value, gridcraft_engine::core::Value::Number(46093.0));
+    }
 }

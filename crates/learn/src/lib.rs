@@ -6,16 +6,24 @@
 
 pub mod check;
 pub mod content;
+pub mod curriculum;
+pub mod evidence;
+pub mod formula_diagnosis;
 pub mod fsrs;
 pub mod profile;
 pub mod quiz;
 pub mod rng;
+#[cfg(test)]
+mod safety_tests;
 pub mod sheet;
 pub mod sql;
 #[cfg(test)]
 mod tests;
 
-pub use check::{Check, Evaluation, Kind, Outcome, evaluate};
+pub use check::{
+    Check, Evaluation, Expectation, Kind, Observation, Outcome, SourcePolicy, evaluate, evaluate_with_observation, evaluate_with_policy,
+    evaluate_with_policy_and_observation,
+};
 pub use profile::{Attempt, Lesson, Profile, Slot};
 
 use gridcraft_engine::{DocState, Session, model::Workbook};
@@ -96,7 +104,10 @@ impl Task {
         self.checks
             .iter()
             .filter_map(|c| match &c.kind {
-                Kind::Formula { cell, .. } | Kind::Value { cell, .. } => Some(cell.clone()),
+                Kind::Formula { cell, .. } | Kind::FormulaError { cell, .. } | Kind::Value { cell, .. } | Kind::Expected { cell, .. } => {
+                    Some(cell.clone())
+                }
+                Kind::Live { cell, .. } => cell.clone(),
                 _ => None,
             })
             .collect()
@@ -105,6 +116,10 @@ impl Task {
         self.checks.iter().filter_map(|c| if let Kind::Keys { combo } = &c.kind { Some(combo.clone()) } else { None }).collect()
     }
     pub fn skill_name(&self) -> String {
+        if let Some(base) = content::live::base(&self.spec.skill) {
+            let name = content::skill(base).map(|s| gridcraft_tr::ts(s.name).to_string()).unwrap_or_default();
+            return format!("{name} · живые данные");
+        }
         content::skill(&self.spec.skill)
             .map(|s| gridcraft_tr::ts(s.name).to_string())
             .or_else(|| content::cases::case(&self.spec.skill).map(|c| gridcraft_tr::ts(c.title).to_string()))
@@ -165,10 +180,25 @@ impl Save {
             return Err(LearnError::Invalid("Неизвестная версия файла прогресса; файл сохранён без изменений".into()));
         }
         if let Some(c) = &s.current
-            && (c.workbook.sheets.len() != 1 || c.workbook.sheets.first().is_none_or(|sh| sh.cells.len() > 50_000) || !c.elapsed.is_finite())
+            && (!valid_exercise_workbook(&c.workbook) || !c.elapsed.is_finite() || c.elapsed < 0.0)
         {
             return Err(LearnError::Invalid("Повреждённое упражнение в файле прогресса".into()));
         }
         Ok(s)
     }
+}
+
+/// Resource and address bounds for persisted exercise books (across all sheets).
+pub fn valid_exercise_workbook(wb: &Workbook) -> bool {
+    if wb.sheets.is_empty() || wb.sheets.len() > 64 || wb.active_sheet >= wb.sheets.len() {
+        return false;
+    }
+    let mut total = 0usize;
+    for (i, sh) in wb.sheets.iter().enumerate() {
+        total = total.saturating_add(sh.cells.len());
+        if total > 50_000 || wb.check_sheet_name(&sh.name, Some(i)).is_err() || sh.cells.iter().any(|(a, _)| !a.is_valid()) {
+            return false;
+        }
+    }
+    true
 }

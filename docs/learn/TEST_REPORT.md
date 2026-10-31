@@ -1,5 +1,8 @@
 # Test report — verified 2026-10-12
 
+Historical baseline report. This is not test evidence for the scenario-based
+curriculum update; its validation is tracked in `implementation-notes.md`.
+
 Compiler: rustc 1.99.0. Passing build settings: CARGO_BUILD_JOBS=2, CARGO_PROFILE_DEV_CODEGEN_UNITS=1, CARGO_PROFILE_DEV_DEBUG=0, CARGO_INCREMENTAL=0. Test commands and complete outputs are in validation-logs/.
 
 ## Passing new work

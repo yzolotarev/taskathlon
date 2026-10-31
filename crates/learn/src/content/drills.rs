@@ -1,6 +1,6 @@
 //! Formula and table drills.
 
-use super::{CITIES, DEPTS, Gen, MONTHS, PARTIES, PEOPLE, PRODUCTS, Table};
+use super::{CITIES, DEPTS, Gen, PARTIES, PEOPLE, PRODUCTS, Table};
 use crate::Result;
 use crate::Task;
 use crate::check::Kind;
@@ -331,7 +331,7 @@ pub fn mixed(g: &mut Gen) -> Result<Task> {
 }
 
 /// A ledger of invoices: party | number | amount (+ distractor VAT column at level 4).
-fn invoices(g: &mut Gen, title: &str, party_pool: usize) -> (Table, Vec<&'static str>) {
+pub(super) fn invoices(g: &mut Gen, title: &str, party_pool: usize) -> (Table, Vec<&'static str>) {
     let n = g.rows();
     let headers: &[&str] = if g.level >= 4 {
         &[ts("Контрагент"), ts("Счёт №"), ts("Сумма"), ts("в т.ч. НДС")]
@@ -686,6 +686,138 @@ pub fn vlookup(g: &mut Gen) -> Result<Task> {
         &tr(&format!("Найди цену товара с кодом из {k} через ВПР: таблица {table}, столбец 3, ЛОЖЬ.")),
         &tr(&format!("Сколько стоит товар с кодом из {k}?")),
     ))
+}
+
+/// First half of the VLOOKUP→IFERROR ladder: perform an exact lookup for a code that is
+/// deliberately absent and observe the real #N/A result before learning how to handle it.
+pub fn lookup_error_observe(g: &mut Gen) -> Result<Task> {
+    let (t, codes) = price_list(g, true);
+    let oc = t.right + 2;
+    g.setup.header(t.header, oc, &[ts("Заказ: код"), ts("Результат ВПР")]);
+    let table = format!("{}:{}", t.cell(0, t.first), t.cell(2, t.last));
+    let hit_row = t.first;
+    let miss_row = t.first + 1;
+    let at = g.l.below(codes.len());
+    let hit = codes.get(at).cloned().unwrap_or_default();
+    let missing = tr(&format!("Z-{}", g.l.int(100, 999)));
+    let mut shown = Vec::new();
+    for (row, code) in [(hit_row, hit.clone()), (miss_row, missing.clone())] {
+        g.txt(&t, oc, row, &code);
+        let cell = t.cell(oc + 1, row);
+        g.setup.answer(cell.clone());
+        let reference = format!("=VLOOKUP({},{table},3,FALSE)", t.cell(oc, row));
+        // Canonical English for the engine; the visible text follows the learner's Excel locale.
+        shown.push(format!("{cell}: {}", crate::sheet::ru(&reference)));
+        if row == miss_row {
+            g.check(&cell, Kind::FormulaError { cell: cell.clone(), reference, error: "#N/A".into(), live: true });
+        } else {
+            g.formula_check(&cell, &reference);
+        }
+    }
+    let (hit_cell, miss_cell) = (t.cell(oc + 1, hit_row), t.cell(oc + 1, miss_row));
+    let (hit_code, miss_code) = (t.cell(oc, hit_row), t.cell(oc, miss_row));
+    let prompt = if g.level == 1 {
+        tr(&format!(
+            "Код из {hit_code} есть в каталоге, кода из {miss_code} нет. Введи ВПР в обе жёлтые ячейки: каждая формула ищет код из своей строки. Посмотри, что вернёт Excel."
+        ))
+    } else {
+        tr(&format!(
+            "В {hit_cell} и {miss_cell} найди цену через ВПР с точным совпадением, каждая ячейка ищет код из своей строки. Один код есть в каталоге, другого нет: посмотри, что вернёт Excel."
+        ))
+    };
+    let mut task = g.task(ts("Увидеть #Н/Д"), prompt, Some(shown.join("\n")), hit_cell.clone());
+    let false_word = if gridcraft_tr::english() { "FALSE" } else { "ЛОЖЬ" };
+    let mut hints = vec![
+        tr(&format!(
+            "Код {hit} есть в каталоге (строка {}), поэтому в {hit_cell} получится его цена. Кода {missing} в каталоге нет, поэтому в {miss_cell} будет #Н/Д. Так и задумано.",
+            t.first + at as u32
+        )),
+        tr(&format!(
+            "Формулы в {hit_cell} и {miss_cell} отличаются только первой частью: в {hit_cell} ищем код из {hit_code}, в {miss_cell} ищем код из {miss_code}."
+        )),
+        tr(&format!(
+            "Что значит каждая часть: {hit_code} - что ищем, {table} - каталог, 3 - номер столбца с ценой, {false_word} - только точное совпадение"
+        )),
+    ];
+    if g.level > 1 {
+        hints.push(tr(&format!("Ответ: {}", shown.join("\n"))));
+    }
+    task.hints = hints;
+    Ok(task)
+}
+
+/// Second half: VLOOKUP results already exist. Practise only wrapping the result cell.
+pub fn lookup_iferror_wrap(g: &mut Gen) -> Result<Task> {
+    let (t, codes) = price_list(g, true);
+    let oc = t.right + 2;
+    g.setup.header(t.header, oc, &[ts("Заказ: код"), ts("Результат ВПР"), ts("Без ошибки")]);
+    let table = format!("{}:{}", t.cell(0, t.first), t.cell(2, t.last));
+    let rows = [t.first, t.first + 1];
+    let hit = codes.get(g.l.below(codes.len())).cloned().unwrap_or_default();
+    let missing = tr(&format!("Z-{}", g.l.int(100, 999)));
+    let missing_label = if gridcraft_tr::english() { "none" } else { "нет" };
+    for (row, code) in [(rows[0], hit), (rows[1], missing)] {
+        g.txt(&t, oc, row, &code);
+        let lookup = t.cell(oc + 1, row);
+        let lookup_formula = format!("=VLOOKUP({},{table},3,FALSE)", t.cell(oc, row));
+        g.setup.put(lookup.clone(), Cell::Formula(lookup_formula), false);
+        let output = t.cell(oc + 2, row);
+        g.setup.answer(output.clone());
+        g.formula_check(&output, &format!("=IFERROR({lookup},\"{missing_label}\")"));
+    }
+    let example = format!("=IFERROR({},\"{missing_label}\")", t.cell(oc + 1, rows[1]));
+    let mut task = g.task(
+        ts("Обернуть результат в ЕСЛИОШИБКА"),
+        tr(&format!("В столбце {} результат ВПР уже вычислен. В {} и {} оберни готовый результат в ЕСЛИОШИБКА(...;\"нет\"). Сравни строку с найденным кодом и строку с #Н/Д.",
+            super::letter(oc + 1), t.cell(oc + 2, rows[0]), t.cell(oc + 2, rows[1]))),
+        Some(example),
+        t.cell(oc + 2, rows[1]),
+    );
+    task.goal_seconds += 10.0;
+    Ok(task)
+}
+
+/// Third half: compose the lookup and error wrapper, then transfer to several order rows.
+pub fn lookup_iferror_combine(g: &mut Gen) -> Result<Task> {
+    let (t, codes) = price_list(g, true);
+    let oc = t.right + 2;
+    g.setup.header(t.header, oc, &[ts("Заказ: код"), ts("Цена или сообщение")]);
+    let count = match g.level {
+        1 => 2,
+        2 => 3,
+        3 => 5,
+        _ => 8,
+    };
+    let missing_at = g.l.below(count);
+    let table = format!("${}${}:${}${}", super::letter(t.col(0)), t.first, super::letter(t.col(2)), t.last);
+    let missing_label = if gridcraft_tr::english() { "none" } else { "нет" };
+    let mut first_formula = String::new();
+    for i in 0..count {
+        let row = t.first + i as u32;
+        let code =
+            if i == missing_at { tr(&format!("Z-{}", g.l.int(100, 999))) } else { codes.get(g.l.below(codes.len())).cloned().unwrap_or_default() };
+        g.txt(&t, oc, row, &code);
+        let cell = t.cell(oc + 1, row);
+        g.setup.answer(cell.clone());
+        let reference = format!("=IFERROR(VLOOKUP({},{},3,FALSE),\"{missing_label}\")", t.cell(oc, row), table);
+        if i == 0 {
+            first_formula = reference.clone();
+        }
+        g.formula_check(&cell, &reference);
+    }
+    let first = t.cell(oc + 1, t.first);
+    let last = t.cell(oc + 1, t.first + count as u32 - 1);
+    let prompt = match g.level {
+        1 => tr(&format!(
+            "Введи формулу в {first} и протяни до {last}. Сначала ВПР ищет точный код, внешняя ЕСЛИОШИБКА возвращает «нет», если кода нет."
+        )),
+        2 => tr(&format!("Подтяни цены в {first}:{last}. Соедини знакомую ВПР с ЕСЛИОШИБКА; проверь существующий и отсутствующий код.")),
+        _ => tr(&format!("Подготовь ответ по каждому артикулу в {first}:{last}. Отсутствующий код отметь словом «нет», а не нулём.")),
+    };
+    let example = Some(crate::sheet::ru(&first_formula));
+    let mut task = g.task(ts("Соединить ВПР и ЕСЛИОШИБКА"), prompt, example, first);
+    task.goal_seconds += 15.0;
+    Ok(task)
 }
 
 pub fn xlookup(g: &mut Gen) -> Result<Task> {
@@ -1099,17 +1231,76 @@ pub fn dedupe(g: &mut Gen) -> Result<Task> {
 }
 
 pub fn pivot(g: &mut Gen) -> Result<Task> {
-    let (t, parties) = invoices(g, ts("Счета за квартал"), 3);
-    let pairs: Vec<(String, String)> = parties.iter().map(|p| ((*p).to_string(), format!("=SUMIF({},\"{p}\",{})", t.range(0), t.range(2)))).collect();
-    g.check(ts("Сводка по контрагентам"), Kind::Pairs { pairs });
+    use gridcraft_engine::model::PivotFunc;
+    let n = g.rows() + 2;
+    let (sup, st, amt) = (ts("Поставщик"), ts("Статус"), ts("Сумма"));
+    let t = g.table(ts("Счета за квартал"), &[sup, st, amt], n);
+    let parties = g.l.sample(PARTIES, 3);
+    let statuses = [ts("Получен"), ts("В пути"), ts("Заказан")];
+    for r in t.rows() {
+        let p = g.d.pick(&parties);
+        g.txt(&t, 0, r, p);
+        let s = g.d.pick(&statuses);
+        g.txt(&t, 1, r, s);
+        let v = g.d.amount(3_000, 250_000, 50);
+        g.num(&t, 2, r, v);
+    }
+    // The ladder: one field in rows → rows × columns → the business question decides the
+    // layout and whether to add up or to count (Excel's «Количество» is the classic slip).
+    let variant = if g.level >= 3 { g.l.below(4) } else { 0 };
+    let (rows, columns, func, ask) = match (g.level, variant) {
+        (1, _) => (vec![sup], vec![], PivotFunc::Sum, String::new()),
+        (2, _) => (vec![sup], vec![st], PivotFunc::Sum, String::new()),
+        (_, 0) => (vec![sup], vec![], PivotFunc::Count, ts("Сколько счетов выставил каждый поставщик?").to_string()),
+        (_, 1) => (vec![st], vec![], PivotFunc::Sum, ts("На какую сумму у нас счетов в каждом статусе?").to_string()),
+        (_, 2) => (
+            vec![sup],
+            vec![st],
+            PivotFunc::Sum,
+            ts("Руководителю нужна таблица: сколько денег по каждому поставщику в разрезе статусов.").to_string(),
+        ),
+        _ => (vec![sup], vec![st], PivotFunc::Count, ts("Сколько счетов у каждого поставщика в каждом статусе?").to_string()),
+    };
+    let source = format!("{}!{}:{}", crate::check::home_sheet(), t.cell(0, t.header), t.cell(2, t.last));
+    g.check(
+        ts("Сводная таблица"),
+        Kind::Pivot {
+            sheet: String::new(),
+            source,
+            rows: rows.iter().map(|s| s.to_string()).collect(),
+            columns: columns.iter().map(|s| s.to_string()).collect(),
+            values: vec![(amt.to_string(), func)],
+        },
+    );
     let prompt = match g.level {
-        1 => ts("Встань в таблицу → «Вставка» → «Сводная таблица» → ОК. Перетащи «Контрагент» в строки, «Сумма» — в значения.").to_string(),
-        2 => ts("Сделай сводку: сумма счетов по каждому контрагенту (сводной таблицей или СУММЕСЛИ рядом с таблицей).").to_string(),
-        _ => ts("Руководитель просит итоги по каждому контрагенту за квартал. Подготовь сводку любым способом.").to_string(),
+        1 => tr(&format!(
+            "Собери сводную: встань в любую ячейку таблицы → «Вставка» → «Сводная таблица». В «Полях сводной таблицы» справа отметь «{sup}» (уйдёт в «Строки») и «{amt}» (уйдёт в «Значения»). Затем «Проверить»."
+        )),
+        2 => tr(&format!(
+            "Сводная «поставщик × статус»: «{sup}» в строках, «{st}» в столбцах, «{amt}» в значениях. Статус попадёт в «Строки»: перенеси его через меню поля → «Переместить в названия столбцов»."
+        )),
+        _ => tr(&format!("{ask} Ответь сводной таблицей.")),
+    };
+    // Function names, not the «Сумма» column header (which reads «Amount» in English).
+    let what = match (func, gridcraft_tr::english()) {
+        (PivotFunc::Count, false) => "Количество",
+        (PivotFunc::Count, true) => "Count",
+        (_, false) => "Сумма",
+        (_, true) => "Sum",
     };
     let mut task = g.task(ts("Сводная таблица"), prompt, None, t.cell(0, t.first));
-    task.goal_seconds = 120.0;
-    task.hints.push(tr(&format!("Без сводной: впиши имена контрагентов в столбец справа, а рядом =СУММЕСЛИ({};имя;{}).", t.abs(0), t.abs(2))));
-    let _ = MONTHS;
+    task.goal_seconds = 90.0 + 15.0 * f32::from(g.level);
+    task.hints = vec![
+        ts("Встань в любую ячейку таблицы, «Вставка» → «Сводная таблица»: Excel сам возьмёт всю таблицу и откроет «Поля сводной таблицы».")
+            .to_string(),
+        tr(&format!(
+            "Что куда: «Строки» - то, что идёт списком слева ({}); «Столбцы» - то, что идёт по верху ({}); «Значения» - что считаем ({amt}).",
+            rows.join(", "),
+            if columns.is_empty() { ts("ничего").to_string() } else { columns.join(", ") }
+        )),
+        tr(&format!(
+            "«Сколько денег» - это Сумма, «сколько счетов» - это Количество. Здесь нужно «{what}». Поменять: меню поля в «Значениях» → «Итоги по: {what}»."
+        )),
+    ];
     Ok(task)
 }

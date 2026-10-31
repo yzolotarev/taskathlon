@@ -3,7 +3,7 @@
 use crate::{LearnError, Result};
 use gridcraft_engine::{
     DocState, Session,
-    core::{CellRef, Value},
+    core::{CellRef, RangeRef, Value},
     formula::{FormulaLocale, parse, print_input},
     model::Workbook,
 };
@@ -30,6 +30,9 @@ pub struct Setup {
     pub widths: Vec<(String, f32)>,
     /// Answer cells, lightly highlighted so the learner sees where to type.
     pub answers: Vec<String>,
+    /// Name of the first sheet (bare addresses), e.g. «Отчёт» when sources sit on other sheets.
+    #[serde(default)]
+    pub first_sheet: Option<String>,
 }
 
 impl Setup {
@@ -69,23 +72,44 @@ impl Setup {
     pub fn session(&self, focus: &str) -> Result<Session> {
         let mut s = Session::new();
         s.new_workbook();
-        self.apply(&mut s)?;
+        self.extend(&mut s, focus)?;
+        Ok(s)
+    }
+
+    /// Adds this exercise to an open book (below earlier work) without clearing it.
+    pub fn extend(&self, s: &mut Session, focus: &str) -> Result<()> {
+        if let Some(name) = &self.first_sheet {
+            let wb = std::sync::Arc::make_mut(&mut s.doc_mut()?.wb);
+            wb.check_sheet_name(name, Some(0)).map_err(LearnError::Invalid)?;
+            if let Some(sheet) = wb.sheets.get_mut(0) {
+                std::sync::Arc::make_mut(sheet).name = name.clone();
+            }
+        }
+        self.ensure_sheets(s)?;
+        self.apply(s)?;
         for (range, w) in &self.widths {
-            s.execute("home.columnWidth", json!({"cols": range, "width": w}))?;
+            execute_range(s, "home.columnWidth", "cols", range, json!({"width": w}))?;
         }
         for range in &self.bold {
-            s.execute("home.bold", json!({"range": range}))?;
+            execute_range(s, "home.bold", "range", range, json!({}))?;
         }
         for cell in &self.answers {
-            s.execute("home.fillColor", json!({"range": cell, "color": "#FFF4C2"}))?;
+            execute_range(s, "home.fillColor", "range", cell, json!({"color": "#FFF4C2"}))?;
         }
-        s.execute("selection.set", json!({"range": focus}))?;
+        let (index, range) = resolve_range(&s.doc()?.wb, focus)?;
+        std::sync::Arc::make_mut(&mut s.doc_mut()?.wb).active_sheet = index;
+        s.execute("selection.set", json!({"range": range.a1()}))?;
         // Setting up the book is not the learner's work.
         if let Ok(d) = s.doc_mut() {
             d.undo.clear();
             d.redo.clear();
         }
-        Ok(s)
+        Ok(())
+    }
+
+    /// The last row (1-based) holding anything on the first sheet; 0 for an empty sheet.
+    pub fn last_row(s: &Session) -> u32 {
+        s.doc().ok().and_then(|d| d.wb.sheet(0).map(|sh| sh.cells.iter().map(|(a, _)| a.row + 1).max().unwrap_or(0))).unwrap_or(0)
     }
 
     /// Writes cells and number formats into the active sheet.
@@ -94,19 +118,46 @@ impl Setup {
             set(s, cell, value)?;
         }
         for (range, code) in &self.formats {
-            s.execute("home.numberFormat", json!({"range": range, "code": code}))?;
+            execute_range(s, "home.numberFormat", "range", range, json!({"code": code}))?;
+        }
+        Ok(())
+    }
+
+    /// Add sheets named by qualified setup cells; no new serialized Setup fields are required.
+    pub fn ensure_sheets(&self, s: &mut Session) -> Result<()> {
+        for (cell, _, _) in &self.cells {
+            let Some((name, _)) = cell.rsplit_once('!') else { continue };
+            let name = if name.starts_with('\'') && name.ends_with('\'') && name.len() >= 2 {
+                name[1..name.len() - 1].replace("''", "'")
+            } else {
+                name.to_string()
+            };
+            let wb = std::sync::Arc::make_mut(&mut s.doc_mut()?.wb);
+            if wb.sheet_index(&name).is_none() {
+                if wb.sheets.len() >= 64 {
+                    return Err(LearnError::Invalid("Too many exercise sheets".into()));
+                }
+                wb.check_sheet_name(&name, None).map_err(LearnError::Invalid)?;
+                wb.sheets.push(std::sync::Arc::new(gridcraft_engine::model::Sheet::new(name)));
+            }
         }
         Ok(())
     }
 }
 
 pub fn set(s: &mut Session, cell: &str, value: &Cell) -> Result<()> {
+    let (index, at) = resolve_cell(&s.doc()?.wb, cell)?;
+    let previous = s.doc()?.wb.active_sheet;
+    std::sync::Arc::make_mut(&mut s.doc_mut()?.wb).active_sheet = index;
+    let cell = at.a1();
     let params = match value {
         Cell::Num(n) | Cell::Date(n) => json!({"cell": cell, "value": n}),
         Cell::Text(t) => json!({"cell": cell, "value": t}),
         Cell::Formula(f) => json!({"cell": cell, "input": f}),
     };
-    s.execute("cell.set", params)?;
+    let result = s.execute("cell.set", params);
+    std::sync::Arc::make_mut(&mut s.doc_mut()?.wb).active_sheet = previous;
+    result?;
     Ok(())
 }
 
@@ -116,23 +167,73 @@ pub fn address(s: &str) -> Result<CellRef> {
 
 pub fn value(s: &Session, cell: &str) -> Result<Value> {
     let d = s.doc()?;
-    let sh = d.wb.sheet(d.wb.active_sheet).ok_or_else(|| LearnError::Invalid(ts("Нет листа").into()))?;
-    Ok(sh.value(address(cell)?))
+    workbook_value(&d.wb, cell)
+}
+
+/// Resolve bare or sheet-qualified A1 addresses, including quoted names and escaped apostrophes.
+pub fn resolve_cell(wb: &Workbook, text: &str) -> Result<(usize, CellRef)> {
+    let (index, cell) = if let Some((name, cell)) = text.rsplit_once('!') {
+        let name = if name.starts_with('\'') && name.ends_with('\'') && name.len() >= 2 {
+            name[1..name.len() - 1].replace("''", "'")
+        } else {
+            name.to_string()
+        };
+        let index = wb.sheet_index(&name).ok_or_else(|| LearnError::Invalid(format!("Unknown sheet: {name}")))?;
+        (index, cell)
+    } else {
+        (wb.active_sheet, text)
+    };
+    if wb.sheet(index).is_none() {
+        return Err(LearnError::Invalid(ts("Нет листа").into()));
+    }
+    Ok((index, address(cell)?))
+}
+
+pub fn workbook_value(wb: &Workbook, cell: &str) -> Result<Value> {
+    let (index, at) = resolve_cell(wb, cell)?;
+    Ok(wb.sheet(index).map(|sh| sh.value(at)).unwrap_or_default())
+}
+
+pub fn resolve_range(wb: &Workbook, text: &str) -> Result<(usize, RangeRef)> {
+    let (prefix, body) = text.rsplit_once('!').map_or((None, text), |(name, body)| (Some(name), body));
+    let range = RangeRef::parse(body).ok_or_else(|| LearnError::Invalid(format!("Invalid range: {text}")))?;
+    let cell = prefix.map_or_else(|| range.start.a1(), |name| format!("{name}!{}", range.start.a1()));
+    let (index, _) = resolve_cell(wb, &cell)?;
+    Ok((index, range))
+}
+
+pub(crate) fn execute_range(s: &mut Session, command: &str, key: &str, text: &str, mut params: serde_json::Value) -> Result<()> {
+    let (index, range) = resolve_range(&s.doc()?.wb, text)?;
+    let previous = s.doc()?.wb.active_sheet;
+    std::sync::Arc::make_mut(&mut s.doc_mut()?.wb).active_sheet = index;
+    params[key] = json!(range.a1());
+    let result = s.execute(command, params);
+    std::sync::Arc::make_mut(&mut s.doc_mut()?.wb).active_sheet = previous;
+    result?;
+    Ok(())
 }
 
 pub fn has_formula(wb: &Workbook, cell: &str) -> bool {
-    let Some(at) = CellRef::parse(cell) else { return false };
-    wb.sheet(wb.active_sheet).and_then(|sh| sh.cell(at)).is_some_and(|c| c.formula.is_some())
+    let Ok((index, at)) = resolve_cell(wb, cell) else { return false };
+    // A value spilled by a dynamic-array formula (=СЖПРОБЕЛЫ(A2:A7) in the first cell) is a
+    // formula result too, not typed by hand.
+    wb.sheet(index).is_some_and(|sh| sh.cell(at).is_some_and(|c| c.formula.is_some()) || sh.spill.contains_key(&at))
 }
 
 /// Evaluates canonical formulas against `setup` in an isolated book (scratch column ZZ).
 pub fn probe(setup: &Setup, formulas: &[&str]) -> Result<Vec<Value>> {
     let mut s = Session::new();
     s.new_workbook();
+    setup.ensure_sheets(&mut s)?;
     setup.apply(&mut s)?;
     let mut out = Vec::new();
-    for (i, f) in formulas.iter().enumerate() {
-        let cell = format!("ZZ{}", i + 1);
+    for f in formulas {
+        // Never overwrite an input used by the reference formula itself.
+        let cell = (0..gridcraft_engine::core::MAX_ROWS)
+            .map(|row| CellRef::new(row, gridcraft_engine::core::MAX_COLS - 1))
+            .find(|at| s.doc().ok().and_then(|d| d.wb.active()).is_some_and(|sh| sh.cell(*at).is_none()))
+            .ok_or_else(|| LearnError::Invalid("No scratch cell available".into()))?
+            .a1();
         set(&mut s, &cell, &Cell::Formula((*f).to_string()))?;
         out.push(value(&s, &cell)?);
     }
@@ -145,7 +246,7 @@ pub fn swap_data(wb: &Workbook, old: &Setup, data: &Setup) -> Result<Session> {
     s.add_document(DocState::new(wb.clone(), None, "Проверка".into()));
     for (cell, _, input) in &old.cells {
         if *input && !data.cells.iter().any(|(c, _, i)| *i && c == cell) {
-            s.execute("edit.clearContents", json!({"range": cell}))?;
+            execute_range(&mut s, "edit.clearContents", "range", cell, json!({}))?;
         }
     }
     for (cell, value, input) in &data.cells {
@@ -203,7 +304,11 @@ pub fn date(y: i64, m: i64, d: i64) -> f64 {
     (era * 146_097 + doe - 719_468 + 25_569) as f64
 }
 
-pub fn date_text(serial: f64) -> String {
+/// Year, month, day of a serial date.
+pub fn ymd(serial: f64) -> Option<(i64, i64, i64)> {
+    if !serial.is_finite() {
+        return None;
+    }
     let z = serial as i64 - 25_569 + 719_468;
     let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
     let doe = z - era * 146_097;
@@ -212,7 +317,11 @@ pub fn date_text(serial: f64) -> String {
     let mp = (5 * doy + 2) / 153;
     let d = doy - (153 * mp + 2) / 5 + 1;
     let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    let y = yoe + era * 400 + i64::from(m <= 2);
+    Some((yoe + era * 400 + i64::from(m <= 2), m, d))
+}
+
+pub fn date_text(serial: f64) -> String {
+    let (y, m, d) = ymd(serial).unwrap_or((1900, 1, 1));
     format!("{d:02}.{m:02}.{y}")
 }
 

@@ -6,8 +6,8 @@ use egui::{Align, Color32, FontId, Layout, RichText, Sense, Stroke, Ui, pos2, ve
 use gridcraft_learn_core::Profile;
 use gridcraft_learn_core::quiz::Track;
 use gridcraft_learn_core::{
-    Mode, Slot,
-    content::{CASES, LEVELS, SKILLS, UNITS},
+    Mode, Slot, Spec, Task,
+    content::{self, CASES, LEVELS, SKILLS, UNITS},
 };
 use gridcraft_tr::{t as tr, ts};
 
@@ -99,179 +99,288 @@ fn side_column(app: &mut LearningApp, ui: &mut Ui, p: &Palette, t: u64, frontier
             view::bubble(ui, &line, p, (ui.available_width() - 30.0).max(120.0));
         });
         ui.add_space(10.0);
-        let label = if first { ts("НАЧАТЬ") } else { ts("ПРОДОЛЖИТЬ") };
-        if big_button(ui, label, p.green, vec2(ui.available_width(), 56.0)).clicked() {
-            let r = app.start_lesson(None);
-            app.handle(r);
+        // ONE primary continuation for the whole course: it never loses the learner's place.
+        if big_button(ui, ts("ПРОДОЛЖИТЬ"), p.green, vec2(ui.available_width(), 56.0)).clicked() {
+            app.continue_course();
         }
-        ui.label(RichText::new(ts("или нажми Enter")).size(12.0).color(p.muted));
-    });
-    card(ui, p, None, |ui| {
-        let today = app.profile.today_xp(t);
-        ui.horizontal(|ui| {
-            ui.label(RichText::new(ts("Цель на день")).size(17.0).strong().color(p.text));
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                ui.label(RichText::new(format!("{today}/{} XP", app.profile.goal)).color(p.muted));
-            });
-        });
-        progress(ui, today as f32 / app.profile.goal.max(1) as f32, p.gold, p.grey, vec2(ui.available_width(), 16.0));
+        let target = if app.active.is_some() {
+            ts("Продолжить начатое занятие").to_string()
+        } else if let Some(id) = app.profile.next_skill(t) {
+            let name = content::skill(id).map(|s| ts(s.name)).unwrap_or(id);
+            tr(&format!("Дальше: «{name}»"))
+        } else {
+            ts("Весь курс пройден").to_string()
+        };
+        ui.label(RichText::new(target).size(12.0).color(p.muted));
+        // Visible progress toward the job interview, so practice reads as moving forward.
+        let (done, total, next) = app.profile.goal_progress();
+        let plan = app.profile.goal_plan(crate::now());
         ui.add_space(6.0);
-        ui.horizontal(|ui| {
-            let streak = app.profile.current_streak(t);
-            ui.label(RichText::new(tr(&format!("🔥 {streak} дн."))).strong().color(if today > 0 { p.orange } else { p.muted }));
-            ui.add_space(10.0);
-            ui.label(RichText::new(format!("💎 {}", app.profile.gems)).strong().color(p.blue));
-            ui.add_space(10.0);
-            ui.label(RichText::new(format!("🧊 {}", app.profile.freezes)).color(p.blue_dark))
-                .on_hover_text(ts("Заморозки серии: спасают один пропущенный день"));
-        });
-        if app.profile.streak_at_risk(t) {
-            ui.label(RichText::new(ts("Сегодня ещё не занимался — серия сгорит в полночь!")).size(12.0).color(p.red_dark));
-        }
-    });
-    app.profile.refresh_quests(t);
-    card(ui, p, None, |ui| {
-        ui.label(RichText::new(ts("📋 Задания дня")).size(17.0).strong().color(p.text));
-        for q in &app.profile.quests {
-            ui.add_space(4.0);
-            ui.horizontal(|ui| {
-                let icon = if q.done { "✅" } else { "▫" };
-                ui.label(RichText::new(format!("{icon} {}", q.title())).color(if q.done { p.green_dark } else { p.text }));
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    ui.label(RichText::new(format!("+{} 💎", q.reward)).size(12.0).color(p.blue));
-                });
-            });
-            progress(
-                ui,
-                q.progress as f32 / q.target.max(1) as f32,
-                if q.done { p.green } else { p.orange },
-                p.grey,
-                vec2(ui.available_width(), 8.0),
-            );
-        }
-    });
-    card(ui, p, None, |ui| {
-        ui.label(RichText::new(ts("⏱ Экспресс-тест")).size(17.0).strong().color(p.text));
-        ui.label(
-            RichText::new(ts(
-                "15 вопросов на время, как онлайн-тесты при отборе в крупные компании: формулы, клавиши, сводные, выводы, SQL. Клавиши 1–4.",
+        ui.label(RichText::new(tr(&format!("🎯 Подготовка к собеседованию: {}%", plan.percent))).size(14.0).strong().color(p.text));
+        ui.add(egui::ProgressBar::new(f32::from(plan.percent) / 100.0).desired_width(ui.available_width()).fill(p.green));
+        let left = if plan.passes_left == 0 {
+            ts("Все ключевые темы на уровне «Сам». Дальше повторения держат их в форме.").to_string()
+        } else {
+            tr(&format!(
+                "Осталось примерно {} заданий, около {} в твоём темпе. Тем на уровне «Сам»: {done} из {total}.",
+                plan.tasks_left,
+                duration_text(plan.minutes_left)
             ))
-            .size(13.0)
-            .color(p.muted),
-        );
-        ui.add_space(6.0);
-        ui.horizontal(|ui| {
-            let w = (ui.available_width() - 16.0) / 3.0;
-            for (label, track, color) in
-                [("EXCEL", Track::Excel, p.green), ("SQL", Track::Sql, Color32::from_rgb(70, 90, 220)), (ts("МИКС"), Track::Mixed, p.orange)]
-            {
-                if big_button(ui, label, color, vec2(w, 42.0)).clicked() {
-                    app.start_blitz(track);
+        };
+        ui.label(RichText::new(left).size(12.5).color(p.text));
+        if let Some(s) = next.and_then(content::skill) {
+            ui.label(RichText::new(tr(&format!("Следующая тема к цели: «{}».", ts(s.name)))).size(12.5).color(p.muted));
+        }
+        let t = crate::now();
+        if app.profile.sprinting(t) {
+            let hours = (app.profile.sprint_until.saturating_sub(t) + 1800) / 3600;
+            ui.label(
+                RichText::new(tr(&format!("⏳ До собеседования: {hours} ч. Режим подготовки: только задания к цели.",))).size(12.5).color(p.muted),
+            );
+            if app.profile.goal_reached() {
+                ui.label(
+                    RichText::new(ts("✅ Цель достигнута! «Продолжить» теперь даёт практику для уверенности: ключевые темы до уровня «Как на работе», сначала самые подзабытые. Утром перед выходом: один короткий урок как разминка."))
+                        .size(12.5)
+                        .strong()
+                        .color(p.green_dark),
+                );
+                if app.profile.case_open("case.procurement") && ui.button(ts("📋 Итоговый кейс снабженца: как тестовое задание (≈35 мин)")).clicked()
+                {
+                    let r = app.start_case("case.procurement", false);
+                    app.handle(r);
                 }
             }
-        });
-        if let Some(b) = app.profile.blitz.last() {
-            ui.label(RichText::new(tr(&format!("Последний: {}/{} верно, {} очков", b.correct, b.total, b.points))).size(12.0).color(p.muted));
         }
-    });
-    card(ui, p, None, |ui| {
-        ui.label(RichText::new(ts("🏁 Спринт")).size(17.0).strong().color(p.text));
-        ui.label(
-            RichText::new(ts("10 настоящих заданий на секундомер. Ошибка — +10 с штрафа. Бей свой рекорд, как в Excel-спорте."))
-                .size(13.0)
-                .color(p.muted),
-        );
-        ui.add_space(6.0);
-        let ready = !app.profile.sprint_skills().is_empty();
-        if ready {
-            if big_button(ui, ts("СТАРТ"), p.orange, vec2(ui.available_width(), 44.0)).clicked() {
-                let r = app.start_sprint(None);
-                app.handle(r);
-            }
-            if let Some(best) = app.profile.sprint_best("mix") {
-                ui.label(RichText::new(tr(&format!("Рекорд: {}", clock(best)))).size(12.0).color(p.muted));
-            }
-        } else {
-            ui.label(RichText::new(ts("Откроется, когда освоишь первые навыки (уровень 2).")).size(12.0).color(p.muted));
-        }
-    });
-    card(ui, p, None, |ui| {
-        ui.label(RichText::new(ts("📒 Учёт")).size(17.0).strong().color(p.text));
-        ui.label(
-            RichText::new(ts(
-                "Учётная программа как на работе: документы, «Провести», проводки, ОСВ, закрытие месяца. Демо-компания уже ведёт январь.",
-            ))
-            .size(13.0)
-            .color(p.muted),
-        );
-        ui.add_space(6.0);
-        if big_button(ui, ts("ОТКРЫТЬ УЧЁТ"), Color32::from_rgb(220, 90, 160), vec2(ui.available_width(), 44.0)).clicked() {
-            app.screen = Screen::Ledger;
-        }
-    });
-    card(ui, p, None, |ui| {
-        ui.label(RichText::new(ts("🎯 Собеседование")).size(17.0).strong().color(p.text));
-        ui.label(RichText::new(ts("Тестовое задание как у работодателя: письмо, данные, таймер, без подсказок.")).size(13.0).color(p.muted));
-        ui.add_space(6.0);
-        if big_button(ui, ts("ПРОЙТИ ТЕСТОВОЕ"), p.blue, vec2(ui.available_width(), 44.0)).clicked() {
-            let r = app.start_interview();
+        // Deliberate secondary entry into the supply sections, showing its own saved step.
+        let supply_link = app
+            .cursor_supply_stage()
+            .map(|stage| tr(&format!("Разделы · снабжение (шаг {})", stage + 1)))
+            .unwrap_or_else(|| ts("Разделы · снабжение").to_string());
+        if ui.link(supply_link).clicked() {
+            let r = app.open_supply();
             app.handle(r);
         }
-        if let Some(last) = app.profile.interviews.last() {
-            ui.label(
-                RichText::new(tr(&format!("Последнее: {:.0}% за {} мин", last.score * 100.0, (last.seconds / 60.0).ceil())))
-                    .size(12.0)
-                    .color(p.muted),
-            );
-        }
     });
-    card(ui, p, None, |ui| {
-        ui.label(RichText::new(tr(&format!("💎 Лавка · у тебя {}", app.profile.gems))).size(17.0).strong().color(p.text));
-        ui.horizontal(|ui| {
-            ui.label(RichText::new(tr(&format!("🧊 Заморозка серии ({}/2)", app.profile.freezes))).color(p.text));
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if ui.button(format!("{} 💎", Profile::FREEZE_PRICE)).clicked() {
-                    match app.profile.buy_freeze() {
-                        Ok(()) => app.notice = Some(ts("🧊 Заморозка куплена: один пропуск не сломает серию.").into()),
-                        Err(e) => app.notice = Some(e),
+    egui::CollapsingHeader::new("Другие режимы и игровые награды").show(ui, |ui| {
+        card(ui, p, None, |ui| {
+            let today = app.profile.today_xp(t);
+            ui.horizontal(|ui| {
+                ui.label(RichText::new(ts("Цель на день")).size(17.0).strong().color(p.text));
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    ui.label(RichText::new(format!("{today}/{} XP", app.profile.goal)).color(p.muted));
+                });
+            });
+            progress(ui, today as f32 / app.profile.goal.max(1) as f32, p.gold, p.grey, vec2(ui.available_width(), 16.0));
+            ui.add_space(6.0);
+            ui.horizontal(|ui| {
+                let streak = app.profile.current_streak(t);
+                ui.label(RichText::new(tr(&format!("🔥 {streak} дн."))).strong().color(if today > 0 { p.orange } else { p.muted }));
+                ui.add_space(10.0);
+                ui.label(RichText::new(format!("💎 {}", app.profile.gems)).strong().color(p.blue));
+                ui.add_space(10.0);
+                ui.label(RichText::new(format!("🧊 {}", app.profile.freezes)).color(p.blue_dark))
+                    .on_hover_text(ts("Заморозки серии: спасают один пропущенный день"));
+            });
+            if app.profile.streak_at_risk(t) {
+                ui.label(RichText::new(ts("Сегодня ещё не занимался — серия сгорит в полночь!")).size(12.0).color(p.red_dark));
+            }
+        });
+        app.profile.refresh_quests(t);
+        card(ui, p, None, |ui| {
+            ui.label(RichText::new(ts("📋 Задания дня")).size(17.0).strong().color(p.text));
+            for q in &app.profile.quests {
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    let icon = if q.done { "✅" } else { "▫" };
+                    ui.label(RichText::new(format!("{icon} {}", q.title())).color(if q.done { p.green_dark } else { p.text }));
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        ui.label(RichText::new(format!("+{} 💎", q.reward)).size(12.0).color(p.blue));
+                    });
+                });
+                progress(
+                    ui,
+                    q.progress as f32 / q.target.max(1) as f32,
+                    if q.done { p.green } else { p.orange },
+                    p.grey,
+                    vec2(ui.available_width(), 8.0),
+                );
+            }
+        });
+        card(ui, p, None, |ui| {
+            ui.label(RichText::new(ts("⏱ Экспресс-тест")).size(17.0).strong().color(p.text));
+            ui.label(
+                RichText::new(ts(
+                    "15 вопросов на время, как онлайн-тесты при отборе в крупные компании: формулы, клавиши, сводные, выводы, SQL. Клавиши 1–4.",
+                ))
+                .size(13.0)
+                .color(p.muted),
+            );
+            ui.add_space(6.0);
+            ui.horizontal(|ui| {
+                let w = (ui.available_width() - 24.0) / 4.0;
+                for (label, track, color) in [
+                    ("EXCEL", Track::Excel, p.green),
+                    ("SQL", Track::Sql, Color32::from_rgb(70, 90, 220)),
+                    (ts("МИКС"), Track::Mixed, p.orange),
+                    ("СНАБЖЕНИЕ", Track::Supply, Color32::from_rgb(14, 116, 144)),
+                ]
+                {
+                    if big_button(ui, label, color, vec2(w, 42.0)).clicked() {
+                        app.start_blitz(track);
                     }
                 }
             });
+            if let Some(b) = app.profile.blitz.last() {
+                ui.label(RichText::new(tr(&format!("Последний: {}/{} верно, {} очков", b.correct, b.total, b.points))).size(12.0).color(p.muted));
+            }
         });
-        match app.profile.wager.clone() {
-            Some(w) => {
-                let left = (w.start_day + u64::from(w.days)).saturating_sub(app.profile.day(t));
-                ui.label(RichText::new(tr(&format!("🎲 Ставка: ещё {left} дн. без пропусков → +{} 💎", w.stake * 2))).color(p.orange));
+        card(ui, p, None, |ui| {
+            ui.label(RichText::new(ts("🏁 Спринт")).size(17.0).strong().color(p.text));
+            ui.label(
+                RichText::new(ts("10 настоящих заданий на секундомер. Ошибка — +10 с штрафа. Бей свой рекорд, как в Excel-спорте."))
+                    .size(13.0)
+                    .color(p.muted),
+            );
+            ui.add_space(6.0);
+            let ready = !app.profile.sprint_skills().is_empty();
+            if ready {
+                if big_button(ui, ts("СТАРТ"), p.orange, vec2(ui.available_width(), 44.0)).clicked() {
+                    let r = app.start_sprint(None);
+                    app.handle(r);
+                }
+                if let Some(best) = app.profile.sprint_best("mix") {
+                    ui.label(RichText::new(tr(&format!("Рекорд: {}", clock(best)))).size(12.0).color(p.muted));
+                }
+            } else {
+                ui.label(RichText::new(ts("Откроется, когда освоишь первые навыки (уровень 2).")).size(12.0).color(p.muted));
             }
-            None => {
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new(ts("🎲 Ставка: 7 дней подряд")).color(p.text))
-                        .on_hover_text(ts("Ставишь 50 💎. Не пропустишь ни дня неделю — получишь 100 💎. Пропустишь — ставка сгорит."));
-                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        if ui.button("50 → 100 💎").clicked() {
-                            match app.profile.place_wager(50, 7, t) {
-                                Ok(()) => app.notice = Some(ts("🎲 Ставка принята! Неделя без пропусков — и 100 💎 твои.").into()),
-                                Err(e) => app.notice = Some(e),
-                            }
+        });
+        card(ui, p, None, |ui| {
+            ui.label(RichText::new(ts("📒 Учёт")).size(17.0).strong().color(p.text));
+            ui.label(
+                RichText::new(ts(
+                    "Учётная программа как на работе: документы, «Провести», проводки, ОСВ, закрытие месяца. Демо-компания уже ведёт январь.",
+                ))
+                .size(13.0)
+                .color(p.muted),
+            );
+            ui.add_space(6.0);
+            if big_button(ui, ts("ОТКРЫТЬ УЧЁТ"), Color32::from_rgb(220, 90, 160), vec2(ui.available_width(), 44.0)).clicked() {
+                app.screen = Screen::Ledger;
+            }
+        });
+        card(ui, p, None, |ui| {
+            ui.label(RichText::new(ts("🎯 Собеседование")).size(17.0).strong().color(p.text));
+            ui.label(RichText::new(ts("Тестовое задание как у работодателя: письмо, данные, таймер, без подсказок.")).size(13.0).color(p.muted));
+            ui.add_space(6.0);
+            if big_button(ui, ts("ПРОЙТИ ТЕСТОВОЕ"), p.blue, vec2(ui.available_width(), 44.0)).clicked() {
+                let r = app.start_interview();
+                app.handle(r);
+            }
+            if let Some(last) = app.profile.interviews.last() {
+                ui.label(
+                    RichText::new(tr(&format!("Последнее: {:.0}% за {} мин", last.score * 100.0, (last.seconds / 60.0).ceil())))
+                        .size(12.0)
+                        .color(p.muted),
+                );
+            }
+        });
+        card(ui, p, None, |ui| {
+            ui.label(RichText::new(tr(&format!("💎 Лавка · у тебя {}", app.profile.gems))).size(17.0).strong().color(p.text));
+            ui.horizontal(|ui| {
+                ui.label(RichText::new(tr(&format!("🧊 Заморозка серии ({}/2)", app.profile.freezes))).color(p.text));
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    if ui.button(format!("{} 💎", Profile::FREEZE_PRICE)).clicked() {
+                        match app.profile.buy_freeze() {
+                            Ok(()) => app.notice = Some(ts("🧊 Заморозка куплена: один пропуск не сломает серию.").into()),
+                            Err(e) => app.notice = Some(e),
                         }
-                    });
+                    }
                 });
+            });
+            match app.profile.wager.clone() {
+                Some(w) => {
+                    let left = (w.start_day + u64::from(w.days)).saturating_sub(app.profile.day(t));
+                    ui.label(RichText::new(tr(&format!("🎲 Ставка: ещё {left} дн. без пропусков → +{} 💎", w.stake * 2))).color(p.orange));
+                }
+                None => {
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new(ts("🎲 Ставка: 7 дней подряд")).color(p.text))
+                            .on_hover_text(ts("Ставишь 50 💎. Не пропустишь ни дня неделю — получишь 100 💎. Пропустишь — ставка сгорит."));
+                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            if ui.button("50 → 100 💎").clicked() {
+                                match app.profile.place_wager(50, 7, t) {
+                                    Ok(()) => app.notice = Some(ts("🎲 Ставка принята! Неделя без пропусков — и 100 💎 твои.").into()),
+                                    Err(e) => app.notice = Some(e),
+                                }
+                            }
+                        });
+                    });
+                }
             }
+        });
+        if !app.profile.remediation.is_empty() {
+            card(ui, p, Some(p.red_soft), |ui| {
+                let names: Vec<&str> =
+                    app.profile.remediation.iter().filter_map(|id| SKILLS.iter().find(|s| s.id == id).map(|s| ts(s.name))).collect();
+                ui.label(RichText::new(ts("Работа над ошибками")).strong().color(p.red_dark));
+                ui.label(RichText::new(names.join(", ")).color(p.text));
+                ui.label(RichText::new(ts("Попадут в начало следующего урока.")).size(12.0).color(p.muted));
+            });
         }
     });
-    if !app.profile.remediation.is_empty() {
-        card(ui, p, Some(p.red_soft), |ui| {
-            let names: Vec<&str> = app.profile.remediation.iter().filter_map(|id| SKILLS.iter().find(|s| s.id == id).map(|s| ts(s.name))).collect();
-            ui.label(RichText::new(ts("Работа над ошибками")).strong().color(p.red_dark));
-            ui.label(RichText::new(names.join(", ")).color(p.text));
-            ui.label(RichText::new(ts("Попадут в начало следующего урока.")).size(12.0).color(p.muted));
-        });
-    }
 }
 
 pub fn home(app: &mut LearningApp, ui: &mut Ui) {
     let p = pal(app);
     top_bar(app, ui, &p);
+    egui::Frame::NONE.fill(p.bg).inner_margin(egui::Margin::symmetric(16, 8)).show(ui, |ui| {
+    ui.set_width(ui.available_width());
+    ui.heading("Старт снабжения · первая рабочая книга");
+    ui.label("От первого ввода до самостоятельного заказа — одна непрерывная книга, без гонки за XP.");
+    egui::CollapsingHeader::new("12 этапов снабжения · отдельные упражнения и итоговый кейс").show(ui, |ui| {
+        ui.small("Первая книга выше — непрерывный вводный сценарий. Здесь отдельные упражнения старого тренажёра: помощь постепенно убирается, книги между упражнениями меняются.");
+        for stage in gridcraft_learn_core::curriculum::SUPPLY {
+            egui::CollapsingHeader::new(stage.title).id_salt(stage.id).show(ui, |ui| {
+                ui.label(stage.transfer.task);
+                ui.small(format!("Самопроверка: {}", stage.transfer.verification));
+                for skill in stage.skills {
+                    let name = content::skill(skill).map(|s| s.name).unwrap_or(skill);
+                    ui.horizontal(|ui| {
+                        ui.label(ts(name));
+                        for practice in stage.practice {
+                            let label = match practice.level {
+                                1 => "С примером",
+                                2 => "Инструмент",
+                                3 => "Сам",
+                                _ => "Перенос",
+                            };
+                            if ui.button(label).on_hover_text(practice.instruction).clicked() {
+                                let seed = app.profile.seed();
+                                let r = Task::generate(&Spec::new(skill, practice.level, seed)).and_then(|task| app.load(task, None, None, None));
+                                if r.is_ok() {
+                                    app.screen = Screen::Lesson;
+                                    let saved = app.save(); app.handle(saved);
+                                }
+                                app.handle(r);
+                            }
+                        }
+                    });
+                }
+                if let Some(case) = stage.case {
+                    let ready = app.profile.case_open(case);
+                    if ui.add_enabled(ready, egui::Button::new("Самостоятельный кейс снабженца")).clicked() {
+                        let r = app.start_case(case, false);
+                        app.handle(r);
+                    }
+                    if !ready {
+                        ui.small("Подготовьте навыки поиска, условных сумм и сводной в упражнениях выше.");
+                    }
+                }
+            });
+        }
+    });
+    });
     let t = now();
     let frontier = app.profile.frontier();
     // Right column: one big button, today's goal, interview.
@@ -462,6 +571,7 @@ pub fn lesson(app: &mut LearningApp, ui: &mut Ui) {
     let slot = a.slot.clone();
     let task = a.task.clone();
     let hints_used = a.hints;
+    let live = gridcraft_learn_core::content::live::base(&task.spec.skill).is_some();
     let mut quit = false;
     egui::Panel::top("lesson_top").frame(egui::Frame::NONE.fill(p.bg).inner_margin(egui::Margin::symmetric(20, 10))).show(ui, |ui| {
         ui.horizontal(|ui| {
@@ -498,17 +608,37 @@ pub fn lesson(app: &mut LearningApp, ui: &mut Ui) {
                     Some(Slot::Review(_)) => (ts("ПОВТОРЕНИЕ"), Color32::WHITE, p.blue),
                     Some(Slot::Mix(_)) => (ts("ВПЕРЕМЕШКУ"), Color32::WHITE, Color32::from_rgb(168, 85, 247)),
                     Some(Slot::Retry(_)) => (ts("РАБОТА НАД ОШИБКОЙ"), Color32::WHITE, p.red),
+                    Some(Slot::Live(_)) => ("ЖИВЫЕ ДАННЫЕ", Color32::WHITE, p.orange),
                     _ if app.profile.level(&task.spec.skill) <= 1 && app.profile.skills.get(&task.spec.skill).is_none_or(|s| s.attempts == 0) => {
                         (ts("НОВОЕ"), Color32::WHITE, p.green)
                     }
                     _ => (ts("ТРЕНИРОВКА"), Color32::WHITE, p.green_dark),
                 };
                 chip(ui, tag, fg, bg);
-                chip(ui, &task.skill_name(), p.text, p.card);
-                chip(ui, &tr(&format!("Уровень {}: {}", task.spec.level, level_name(task.spec.level))), p.muted, p.card);
+                // From «Сам» on, and on live data, the question is asked in work words so the
+                // learner picks the tool; naming it here would give that choice away. The name
+                // shows once the answer is checked.
+                let hide_tool = task.mode == gridcraft_learn_core::Mode::Drill && (live || task.spec.level >= 3) && app.feedback.is_none();
+                if hide_tool {
+                    chip(ui, ts("Рабочая задача: инструмент выбираешь сам"), p.text, p.card);
+                } else {
+                    chip(ui, &task.skill_name(), p.text, p.card);
+                }
+                if live {
+                    chip(
+                        ui,
+                        &format!("Ступень {} / {}: {}", task.spec.level, gridcraft_learn_core::content::live::TIERS, live_step(task.spec.level)),
+                        p.muted,
+                        p.card,
+                    );
+                } else {
+                    chip(ui, &tr(&format!("Уровень {}: {}", task.spec.level, level_name(task.spec.level))), p.muted, p.card);
+                }
                 if !task.keys().is_empty() {
                     chip(ui, &format!("⌨ {}", task.keys().join(", ")), p.text, Color32::from_rgb(255, 236, 179));
                 }
+                // Where the learner is on the way to the interview, visible in every task.
+                chip(ui, &tr(&format!("🎯 {}%", app.profile.goal_plan(crate::now()).percent)), p.green_dark, p.green_soft);
                 if sprint.is_none() && app.feedback.is_none() {
                     // A quiet stopwatch: under 40 % of the target time is a lightning answer.
                     let goal = task.goal_seconds;
@@ -558,6 +688,15 @@ pub fn lesson(app: &mut LearningApp, ui: &mut Ui) {
                     let r = app.advance();
                     app.handle(r);
                 }
+                if task.sql.is_none()
+                    && ui
+                        .add_enabled(app.feedback.is_none(), egui::Button::new(ts("↺ Начать заново")))
+                        .on_hover_text(ts("Вернуть таблицу задания в исходный вид"))
+                        .clicked()
+                {
+                    let r = app.reset_task();
+                    app.handle(r);
+                }
                 if app.ai_config.is_some() {
                     let ok = app.ai_consent && app.ai_pending.is_none() && app.ai_requests < 20;
                     if ui
@@ -570,6 +709,15 @@ pub fn lesson(app: &mut LearningApp, ui: &mut Ui) {
                 }
                 let note = if task.sql.is_some() {
                     ts("Ctrl+Enter — выполнить запрос; верный результат засчитается сам.")
+                } else if task.spec.skill.starts_with("asm.") {
+                    "Отчёт засчитается сам, когда всё сойдётся. Что не так — Ctrl+Enter. Листы-источники — во вкладках внизу."
+                } else if live && task.answer_cells().is_empty() {
+                    "Верный ответ засчитается сам. Проверить сейчас — Ctrl+Enter."
+                } else if live {
+                    "Ответ проверяется сам, когда заполнишь ячейку ответа. Данные можно чистить."
+                } else if task.answer_cells().is_empty() {
+                    // Sorting, filters, pivots: no yellow cells; a right result is accepted on its own.
+                    ts("Верный результат засчитается сам. Проверить сейчас — Ctrl+Enter.")
                 } else {
                     ts("Ответ проверяется сам, когда заполнишь жёлтые ячейки.")
                 };
@@ -587,6 +735,16 @@ pub fn lesson(app: &mut LearningApp, ui: &mut Ui) {
         sql_panel(app, ui, &p);
     } else {
         app.sheet.ui(ui);
+    }
+}
+
+/// What the live-data step asks of the learner at each dirt tier.
+fn live_step(tier: u8) -> &'static str {
+    match tier {
+        1 => "одна ошибка ввода, ответ в жёлтой ячейке",
+        2 => "две ошибки, ячейка ответа без подсветки",
+        3 => "три ошибки, ответ оформляешь сам",
+        _ => "всё вместе, как на работе",
     }
 }
 
@@ -680,6 +838,7 @@ fn feedback_banner(app: &mut LearningApp, ui: &mut Ui, p: &Palette) {
     let (bg, fg) = if passed { (p.green_soft, p.green_dark) } else { (p.red_soft, p.red_dark) };
     let mut next = false;
     let mut fix = false;
+    let mut dispute = false;
     egui::Panel::bottom("feedback").frame(egui::Frame::NONE.fill(bg).inner_margin(egui::Margin::symmetric(28, 18))).show(ui, |ui| {
         ui.horizontal(|ui| {
             let (rect, _) = ui.allocate_exact_size(vec2(64.0, 64.0), Sense::hover());
@@ -687,6 +846,9 @@ fn feedback_banner(app: &mut LearningApp, ui: &mut Ui, p: &Palette) {
             ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, if passed { "✔" } else { "✖" }, FontId::proportional(30.0), fg);
             ui.add_space(8.0);
             ui.vertical(|ui| {
+                // Leave room for «Enter», ИСПРАВИТЬ and ДАЛЕЕ, so long feedback wraps instead of
+                // running under the buttons.
+                ui.set_max_width((ui.available_width() - 400.0).max(240.0));
                 let title = if fb.corrected {
                     ts("Исправлено!")
                 } else if passed {
@@ -708,6 +870,9 @@ fn feedback_banner(app: &mut LearningApp, ui: &mut Ui, p: &Palette) {
                     if ch.fast_track {
                         line.push_str(ts("   ⏩ Ты это знаешь — сразу уровень «Сам»"));
                     }
+                    if let Some(t) = ch.live_up {
+                        line.push_str(&format!("   🧹 Следующая таблица грязнее: ступень {t}"));
+                    }
                     if let Some(l) = fb.level_up {
                         line.push_str(&tr(&format!("   ⬆ Новый уровень: «{}»", level_name(l))));
                     }
@@ -718,11 +883,28 @@ fn feedback_banner(app: &mut LearningApp, ui: &mut Ui, p: &Palette) {
                         ui.label(RichText::new(line).size(16.0).strong().color(fg));
                     }
                 } else {
-                    for o in fb.eval.outcomes.iter().filter(|o| !o.passed).take(3) {
+                    // The same message for several cells is said once.
+                    let mut said: Vec<&str> = Vec::new();
+                    for o in fb.eval.outcomes.iter().filter(|o| !o.passed) {
+                        if said.len() == 3 || said.contains(&o.feedback.as_str()) {
+                            continue;
+                        }
+                        said.push(&o.feedback);
                         ui.label(RichText::new(&o.feedback).size(15.0).color(p.text));
                     }
                     if let Some(sol) = fb.eval.outcomes.iter().find(|o| !o.passed).and_then(|o| o.solution.clone()) {
                         ui.label(RichText::new(tr(&format!("Правильно: {sol}"))).font(FontId::monospace(16.0)).color(fg));
+                    }
+                    if !fb.corrected
+                        && ui
+                            .link(RichText::new(ts("Мой ответ верный")).size(13.0))
+                            .on_hover_text(ts("Не согласен с проверкой? Ошибка не засчитается, а случай уйдёт в журнал, чтобы проверку исправили"))
+                            .clicked()
+                    {
+                        dispute = true;
+                    }
+                    if let Some(note) = &fb.note {
+                        ui.label(RichText::new(note).size(14.0).strong().color(p.text));
                     }
                     if fb.level_down {
                         ui.label(RichText::new(ts("Сделаем шаг поменьше — уровень понижен, это нормально.")).size(13.0).color(p.muted));
@@ -745,6 +927,9 @@ fn feedback_banner(app: &mut LearningApp, ui: &mut Ui, p: &Palette) {
         app.handle(r);
     } else if fix {
         app.fix();
+    } else if dispute {
+        let r = app.dispute();
+        app.handle(r);
     }
 }
 
@@ -1558,6 +1743,15 @@ pub fn settings(app: &mut LearningApp, ctx: &egui::Context) {
         });
         ui.checkbox(&mut app.sheet.ui.dark, ts("Тёмная тема"));
         ui.checkbox(&mut app.profile.sound, ts("Звуки"));
+        if ui.checkbox(&mut app.profile.logging, ts("Логирование действий (локально)")).changed() {
+            app.events.set_enabled(app.profile.logging);
+        }
+        ui.label(
+            RichText::new(ts(
+                "Журнал действий хранится только на этом компьютере (папка events рядом с прогрессом) и не отправляется в сеть. Можно выключить в любой момент.",
+            ))
+            .size(12.0),
+        );
         ui.horizontal(|ui| {
             ui.label(ts("Цель на день:"));
             for (xp, name) in [(30, ts("Лёгкая")), (50, ts("Обычная")), (100, ts("Серьёзная")), (200, ts("Интенсив"))] {
@@ -1601,5 +1795,14 @@ pub fn settings(app: &mut LearningApp, ctx: &egui::Context) {
     app.show_settings = open;
     if let Some(r) = remind {
         app.set_reminder(r);
+    }
+}
+
+/// «1 ч 40 мин» / «35 мин».
+fn duration_text(minutes: u32) -> String {
+    match (minutes / 60, minutes % 60) {
+        (0, m) => tr(&format!("{m} мин")),
+        (h, 0) => tr(&format!("{h} ч")),
+        (h, m) => tr(&format!("{h} ч {m} мин")),
     }
 }

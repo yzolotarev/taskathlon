@@ -5,10 +5,12 @@
 
 use gridcraft_tr::{t as tr, ts};
 mod ai;
+pub mod events;
 pub mod ledger_ui;
 pub mod remind;
 mod screens;
 pub mod sound;
+mod supply;
 pub mod view;
 
 use gridcraft_learn_core::{
@@ -37,6 +39,7 @@ pub(crate) fn instant() -> Instant {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Screen {
     Home,
+    Supply,
     Lesson,
     Done,
     Case,
@@ -45,6 +48,76 @@ pub enum Screen {
     Blitz,
     BlitzReport,
     Ledger,
+}
+
+/// Stable label of a screen for the local action log.
+fn screen_name(s: Screen) -> &'static str {
+    match s {
+        Screen::Home => "home",
+        Screen::Supply => "supply",
+        Screen::Lesson => "lesson",
+        Screen::Done => "done",
+        Screen::Case => "case",
+        Screen::Report => "report",
+        Screen::Stats => "stats",
+        Screen::Blitz => "blitz",
+        Screen::BlitzReport => "blitz_report",
+        Screen::Ledger => "ledger",
+    }
+}
+
+/// "ctrl+shift+alt" style label for the input modality of a key/pointer event.
+fn modifiers_label(m: egui::Modifiers) -> String {
+    let mut parts = Vec::new();
+    if m.command || m.ctrl {
+        parts.push("ctrl");
+    }
+    if m.shift {
+        parts.push("shift");
+    }
+    if m.alt {
+        parts.push("alt");
+    }
+    parts.join("+")
+}
+
+/// Fields for a `task.start` event: which exercise, where it came from and its seed.
+fn task_start_fields(task: &Task, lesson: Option<&Lesson>, interview: Option<&Interview>, slot: Option<&Slot>) -> serde_json::Value {
+    let stage = task.spec.skill.strip_prefix(supply::PREFIX).and_then(|s| s.parse::<usize>().ok());
+    let source = if stage.is_some() {
+        "supply"
+    } else if interview.is_some() {
+        "interview"
+    } else if lesson.is_some_and(|l| l.sprint.is_some()) {
+        "sprint"
+    } else if slot.is_some_and(|s| matches!(s, Slot::TestOut(_))) {
+        "testout"
+    } else if lesson.is_some() {
+        "lesson"
+    } else if task.mode != Mode::Drill {
+        "case"
+    } else {
+        "load"
+    };
+    serde_json::json!({
+        "source": source,
+        "skill": task.spec.skill,
+        "stage": stage,
+        "level": task.spec.level,
+        "seed": task.spec.layout,
+        "layout": task.spec.layout,
+        "data": task.spec.data,
+        "mode": format!("{:?}", task.mode),
+    })
+}
+
+/// A snapshot of the supply route, used to notice stage advances and pause/resume.
+#[derive(Clone, PartialEq)]
+struct SupplySnap {
+    stage: Option<usize>,
+    paused: bool,
+    complete: bool,
+    feedback: Option<String>,
 }
 
 /// A short message that floats in and fades (badges, quests, gems).
@@ -90,6 +163,9 @@ impl Blitz {
     }
 }
 
+/// 2026-10-20 10:00 in Almaty (UTC+5), unix seconds.
+pub const INTERVIEW_AT: u64 = 1_792_472_400;
+
 pub struct Active {
     pub task: Task,
     pub lesson: Option<Lesson>,
@@ -103,6 +179,16 @@ pub struct Active {
     /// SQL drills: the query being written and the last run.
     pub query: String,
     pub sql_result: Option<Result<ResultSet, String>>,
+    /// Progress of the skill just before its first grade, so a disputed miss can be undone.
+    pub before_grade: Option<BeforeGrade>,
+}
+
+/// What the first grade of an exercise may change, kept to undo it on «Мой ответ верный».
+#[derive(Clone)]
+pub struct BeforeGrade {
+    pub skill: String,
+    pub progress: Option<gridcraft_learn_core::profile::SkillProgress>,
+    pub live: Option<gridcraft_learn_core::profile::LiveProgress>,
 }
 
 impl Active {
@@ -121,6 +207,8 @@ pub struct Feedback {
     /// Passed only after a correction: no XP, but the exercise is done.
     pub corrected: bool,
     pub change: Change,
+    /// An extra line for the banner (the live-data walkthrough after two misses).
+    pub note: Option<String>,
 }
 
 pub struct SprintSummary {
@@ -157,8 +245,13 @@ pub struct Report {
 }
 
 pub struct LearningApp {
+    pub supply: Option<supply::Route>,
     pub sheet: SheetApp,
     pub profile: Profile,
+    /// Local-only action log (see [`events`]); inert without a persistent path or when off.
+    pub events: events::EventLog,
+    /// Identifier shared by every event of this run.
+    pub session_id: u64,
     pub screen: Screen,
     pub active: Option<Active>,
     pub feedback: Option<Feedback>,
@@ -174,6 +267,8 @@ pub struct LearningApp {
     path: Option<PathBuf>,
     last_save: Instant,
     graded_revision: Option<u64>,
+    /// A drill of this skill just passed: its live-data step opens below it in the same book.
+    live_after: Option<String>,
     confetti: Vec<view::Particle>,
     pending_confetti: bool,
     enter: bool,
@@ -197,6 +292,14 @@ pub struct LearningApp {
     remind_status: Option<String>,
     blitz_key: Option<usize>,
     sprint_clock: Option<Instant>,
+    /// Text typed since the last commit, for the "what was typed where" log.
+    typed: String,
+    /// Whether a pointer button is currently held (drags are logged, moves are not).
+    pointer_down: bool,
+    /// Last screen seen by the observer, so transitions are logged once.
+    logged_screen: Option<Screen>,
+    /// Last supply snapshot, so stage/pause changes become log events.
+    supply_snap: Option<SupplySnap>,
 }
 
 impl LearningApp {
@@ -219,16 +322,27 @@ impl LearningApp {
             }
             _ => None,
         };
-        let (profile, current) = save.map(|s| (s.profile, s.current)).unwrap_or_default();
+        let (mut profile, current) = save.map(|s| (s.profile, s.current)).unwrap_or_default();
+        // The learner's job interview (Орион Система, 20.10 10:00 Алматы): prepare toward it.
+        // Only for a real progress file, never in tests or ephemeral runs.
+        if path.is_some() && profile.sprint_until == 0 && now() < INTERVIEW_AT {
+            profile.sprint_until = INTERVIEW_AT;
+        }
         let mut sheet = SheetApp::new(gridcraft_engine::Session::new(), Services::default());
         sheet.ui.dark = profile.dark;
         gridcraft_tr::set_english(profile.english);
         sheet.ui.language = if profile.english { gridcraft_ui_egui::i18n::Language::En } else { gridcraft_ui_egui::i18n::Language::Ru };
         sheet.ui.ribbon_collapsed = true;
         sheet.ui.animations = false;
+        sheet.ui.interface_scale = gridcraft_ui_egui::clamp_interface_scale(f64::from(profile.interface_scale)).unwrap_or(100);
+        let events = events::EventLog::new(path.as_deref(), profile.logging);
+        let session_id = events.session_id();
         let mut app = Self {
+            supply: None,
             sheet,
             profile,
+            events,
+            session_id,
             screen: Screen::Home,
             active: None,
             feedback: None,
@@ -241,6 +355,7 @@ impl LearningApp {
             path,
             last_save: instant(),
             graded_revision: None,
+            live_after: None,
             confetti: Vec::new(),
             pending_confetti: false,
             enter: false,
@@ -263,12 +378,44 @@ impl LearningApp {
             remind_status: None,
             blitz_key: None,
             sprint_clock: None,
+            typed: String::new(),
+            pointer_down: false,
+            logged_screen: None,
+            supply_snap: None,
         };
         app.greeting = Some(remind::greeting(&app.profile, now()));
         if let Some(c) = current {
+            // One course position: an older progress that predates `cursor` migrates from `current`.
+            if app.profile.cursor.is_none() {
+                app.profile.cursor = Some(c.task.spec.skill.clone());
+            }
+            let supply_stage = c.task.spec.skill.strip_prefix(supply::PREFIX).and_then(|s| s.parse::<usize>().ok()).filter(|s| *s < 12);
+            if supply_stage.is_some() {
+                if app.profile.supply_stage.is_none() {
+                    app.profile.supply_stage = supply_stage.map(|s| s as u8);
+                }
+                app.supply = Some(supply::Route {
+                    quiet: c.query.contains("quiet"),
+                    paused: c.query.contains("paused"),
+                    elapsed: c.elapsed,
+                    started: instant(),
+                    feedback: if c.query.contains("complete") {
+                        Some("Заказы отправлены. Формулы работают и на изменённых данных.".into())
+                    } else {
+                        None
+                    },
+                    complete: c.query.contains("complete"),
+                });
+            }
             app.sheet.session = c.session();
+            if supply_stage.is_some() {
+                app.sheet.session.execute("selection.set", serde_json::json!({"range": c.task.focus}))?;
+            }
             app.keys = c.keys.clone();
             app.screen = if c.task.mode == Mode::Drill { Screen::Lesson } else { Screen::Case };
+            if supply_stage.is_some() {
+                app.screen = Screen::Supply;
+            }
             app.show_hints = c.hints;
             app.active = Some(Active {
                 task: c.task,
@@ -281,10 +428,12 @@ impl LearningApp {
                 recorded: false,
                 query: c.query,
                 sql_result: None,
+                before_grade: None,
             });
-            app.graded_revision = app.revision();
+            app.graded_revision = if supply_stage.is_some() { None } else { app.revision() };
             app.apply_ribbon();
         }
+        app.apply_zoom();
         Ok(app)
     }
 
@@ -292,8 +441,209 @@ impl LearningApp {
         self.sheet.session.doc().ok().map(|d| d.revision)
     }
 
+    /// The zoom of the active sheet, persisted with the profile.
+    fn current_zoom(&self) -> u16 {
+        self.sheet.session.doc().ok().and_then(|d| d.wb.sheets.get(d.wb.active_sheet).map(|s| s.zoom)).unwrap_or(100)
+    }
+
+    /// Re-applies the learner's saved zoom to the fresh workbook a `load` rebuilds.
+    fn apply_zoom(&mut self) {
+        let z = self.profile.sheet_zoom.clamp(10, 400);
+        let _ = self.sheet.session.execute("view.zoom", serde_json::json!({"percent": z}));
+    }
+
+    /// The A1 text of the current selection, the "where" of typed text.
+    fn current_cell(&self) -> String {
+        self.sheet.session.doc().map(|d| d.selection.a1()).unwrap_or_default()
+    }
+
+    /// Local-only event with the current screen attached.
+    fn log_event(&mut self, kind: &str, fields: serde_json::Value) {
+        self.events.set_screen(screen_name(self.screen));
+        self.events.log(kind, fields);
+    }
+
+    /// The mistakes journal: every wrong answer with what was typed and what the grader said,
+    /// and every later correction, so the course can be adapted to the learner's real errors.
+    fn log_mistake(&self, fb: &Feedback, first: bool, hints: u32, seconds: f32) {
+        if fb.passed && first {
+            return;
+        }
+        let result = if fb.passed {
+            "fixed"
+        } else if first {
+            "wrong"
+        } else {
+            "wrong_again"
+        };
+        self.log_mistake_as(fb, result, hints, seconds);
+    }
+
+    fn log_mistake_as(&self, fb: &Feedback, result: &str, hints: u32, seconds: f32) {
+        let Some(a) = self.active.as_ref() else { return };
+        let task = &a.task;
+        let wb = self.sheet.session.doc().ok().map(|d| d.wb.clone());
+        let mut cells = task.answer_cells();
+        // A self-placed live answer has no fixed cell: find it by its «Ответ» label.
+        if let (Some(wb), Some(gridcraft_learn_core::check::Kind::Live { cell: None, top, .. })) = (wb.as_ref(), task.checks.first().map(|c| &c.kind))
+            && let Some(at) = gridcraft_learn_core::check::live_answer_cell(task, wb, *top)
+        {
+            cells.push(at.a1());
+        }
+        let typed: Vec<serde_json::Value> = cells
+            .iter()
+            .map(|cell| {
+                let input = wb
+                    .as_ref()
+                    .and_then(|wb| {
+                        let at = gridcraft_engine::core::CellRef::parse(cell)?;
+                        let sh = wb.sheet(wb.sheet_index(&gridcraft_learn_core::check::home_sheet()).unwrap_or(0))?;
+                        sh.cell(at).map(|c| c.input_text())
+                    })
+                    .unwrap_or_default();
+                serde_json::json!({"cell": cell, "typed": input})
+            })
+            .collect();
+        let wrong: Vec<serde_json::Value> = fb
+            .eval
+            .outcomes
+            .iter()
+            .filter(|o| !o.passed)
+            .map(|o| serde_json::json!({"check": o.label, "said": o.feedback, "right": o.solution}))
+            .collect();
+        let prompt: String = task.prompt.chars().take(400).collect();
+        self.events.mistake(serde_json::json!({
+            "result": result,
+            "skill": task.spec.skill,
+            "name": task.skill_name(),
+            "level": task.spec.level,
+            "title": task.title,
+            "prompt": prompt,
+            "typed": typed,
+            "wrong": wrong,
+            "hints": hints,
+            "seconds": seconds.round(),
+            "keys": self.keys,
+            "query": a.query,
+        }));
+    }
+
+    /// Failing cells of the active task, as graded by the engine.
+    fn failing_cells(&self) -> Vec<String> {
+        self.active
+            .as_ref()
+            .map(|a| {
+                evaluate(&a.task, &self.sheet.session, &self.keys)
+                    .map(|e| e.outcomes.into_iter().filter(|o| !o.passed).map(|o| o.label).collect())
+                    .unwrap_or_default()
+            })
+            .unwrap_or_default()
+    }
+
+    /// Deterministic formula-error classes for the answer cells of the active task, for later
+    /// remediation and offline analysis. Local-only data collection; never blocks practice.
+    fn formula_issues(&self) -> serde_json::Value {
+        let Some(task) = self.active.as_ref().map(|a| &a.task) else { return serde_json::Value::Array(Vec::new()) };
+        let cells: Vec<String> = task
+            .checks
+            .iter()
+            .filter_map(|c| match &c.kind {
+                gridcraft_learn_core::check::Kind::Formula { cell, .. } | gridcraft_learn_core::check::Kind::FormulaError { cell, .. } => {
+                    Some(cell.clone())
+                }
+                _ => None,
+            })
+            .collect();
+        if cells.is_empty() {
+            return serde_json::Value::Array(Vec::new());
+        }
+        let Ok(doc) = self.sheet.session.doc() else { return serde_json::Value::Array(Vec::new()) };
+        let Some(sh) = doc.wb.sheets.get(doc.wb.active_sheet) else { return serde_json::Value::Array(Vec::new()) };
+        use gridcraft_learn_core::formula_diagnosis::{FormulaIssue, diagnose, practice_hint, skill_for};
+        let mut out = Vec::new();
+        for cell in cells {
+            let Some(at) = gridcraft_engine::core::CellRef::parse(&cell) else { continue };
+            let Some(c) = sh.cell(at) else { continue };
+            let raw = match &c.formula {
+                Some(f) => format!("={}", f.text),
+                None => match &c.value {
+                    gridcraft_engine::core::Value::Error(e) => e.as_str().to_string(),
+                    _ => continue,
+                },
+            };
+            let issue = diagnose(&raw);
+            if issue != FormulaIssue::Other {
+                out.push(serde_json::json!({
+                    "cell": cell,
+                    "issue": format!("{issue:?}"),
+                    "hint": practice_hint(&issue),
+                    "skill": skill_for(&issue),
+                }));
+            }
+        }
+        serde_json::Value::Array(out)
+    }
+
+    /// Logs a screen transition once per change.
+    fn observe_screen(&mut self) {
+        if self.logged_screen != Some(self.screen) {
+            let from = self.logged_screen.map(screen_name).unwrap_or("none");
+            let to = screen_name(self.screen);
+            self.log_event("screen", serde_json::json!({"from": from, "to": to}));
+            self.logged_screen = Some(self.screen);
+        }
+    }
+
+    /// The supply route lives in its own module; its progress is observed here so stage
+    /// advances and pause/resume still reach the action log.
+    fn observe_supply(&mut self) {
+        let snap = SupplySnap {
+            stage: self.supply_stage(),
+            paused: self.supply.as_ref().is_some_and(|r| r.paused),
+            complete: self.supply.as_ref().is_some_and(|r| r.complete),
+            feedback: self.supply.as_ref().and_then(|r| r.feedback.clone()),
+        };
+        if let Some(prev) = self.supply_snap.clone() {
+            if snap.paused != prev.paused {
+                self.log_event(if snap.paused { "supply_pause" } else { "supply_resume" }, serde_json::json!({"stage": snap.stage}));
+            }
+            if self.screen == Screen::Supply && snap.stage != prev.stage && snap.stage > prev.stage {
+                let seconds = self.supply.as_ref().map(|r| r.seconds()).unwrap_or(0.0);
+                let hints = self.active.as_ref().map(|a| a.hints).unwrap_or(0);
+                self.log_event(
+                    "check_supply",
+                    serde_json::json!({"passed": true, "stage": snap.stage, "seconds": seconds, "hints": hints, "failing": []}),
+                );
+            }
+            if self.screen == Screen::Supply
+                && snap.feedback != prev.feedback
+                && let Some(text) = snap.feedback.clone()
+                && !text.starts_with('✓')
+                && !text.starts_with("Заказы")
+                && !text.starts_with("Верно")
+            {
+                let failing = self.failing_cells();
+                self.log_event("check_supply", serde_json::json!({"passed": false, "stage": snap.stage, "failing": failing, "feedback": text}));
+            }
+        }
+        self.supply_snap = Some(snap);
+    }
+
     pub fn save(&mut self) -> Result<(), LearnError> {
         self.last_save = instant();
+        self.profile.interface_scale = self.sheet.ui.interface_scale;
+        self.profile.sheet_zoom = self.current_zoom();
+        // The active exercise (including a supply stage advance) is always the course position.
+        if let Some(a) = &self.active {
+            self.profile.set_cursor(&a.task.spec.skill);
+            // The route keeps its own bookmark so the skill line never loses it.
+            if let Some(stage) = a.task.spec.skill.strip_prefix(supply::PREFIX).and_then(|s| s.parse::<usize>().ok()).filter(|s| *s < supply::STAGES)
+            {
+                self.profile.supply_stage = Some(stage as u8);
+            }
+        }
+        let active = self.active.is_some();
+        self.log_event("save", serde_json::json!({"active": active}));
         let Some(path) = self.path.clone() else { return Ok(()) };
         let current = match &self.active {
             Some(a) => Some(Current {
@@ -301,10 +651,24 @@ impl LearningApp {
                 workbook: (*self.sheet.session.doc()?.wb).clone(),
                 lesson: a.lesson.clone(),
                 interview: a.interview.clone(),
-                elapsed: a.seconds(),
+                elapsed: self.supply.as_ref().filter(|_| self.supply_stage().is_some()).map_or_else(|| a.seconds(), |r| r.seconds()),
                 hints: a.hints,
                 keys: self.keys.clone(),
-                query: a.query.clone(),
+                query: if self.supply_stage().is_some() {
+                    self.supply
+                        .as_ref()
+                        .map(|r| {
+                            format!(
+                                "{} {} {}",
+                                if r.paused { "paused" } else { "" },
+                                if r.complete { "complete" } else { "" },
+                                if r.quiet { "quiet" } else { "" }
+                            )
+                        })
+                        .unwrap_or_default()
+                } else {
+                    a.query.clone()
+                },
             }),
             None => None,
         };
@@ -332,14 +696,43 @@ impl LearningApp {
     }
 
     fn load(&mut self, task: Task, lesson: Option<Lesson>, interview: Option<Interview>, slot: Option<Slot>) -> Result<(), LearnError> {
-        let session = task.session()?;
-        self.sheet.session = session;
-        self.sheet.views.clear();
+        self.load_with(task, lesson, interview, slot, false)
+    }
+
+    /// `keep`: add the task below the work already in the book and scroll to it, instead of
+    /// opening a fresh book — the live-data step continues the drill it follows.
+    fn load_with(
+        &mut self,
+        task: Task,
+        lesson: Option<Lesson>,
+        interview: Option<Interview>,
+        slot: Option<Slot>,
+        keep: bool,
+    ) -> Result<(), LearnError> {
+        let start_fields = task_start_fields(&task, lesson.as_ref(), interview.as_ref(), slot.as_ref());
+        self.supply = None;
+        if keep {
+            task.setup.extend(&mut self.sheet.session, &task.focus)?;
+            // Scroll only as far as needed to show the whole new table, so the solved drill
+            // stays in view when both fit (about 24 rows are visible at the default zoom).
+            let rows = task.setup.cells.iter().filter_map(|(c, ..)| gridcraft_engine::core::CellRef::parse(c)).map(|a| a.row);
+            let (top, bottom) = rows.fold((u32::MAX, 0), |(lo, hi), r| (lo.min(r), hi.max(r)));
+            let first = bottom.saturating_sub(23).min(top.saturating_sub(2));
+            let y = self.sheet.session.doc().ok().and_then(|d| d.wb.sheet(0).map(|sh| sh.row_top(first) as f32));
+            if let (Some(y), Some(v)) = (y, self.sheet.view_mut()) {
+                v.scroll = egui::vec2(0.0, y.max(0.0));
+            }
+        } else {
+            self.sheet.session = task.session()?;
+            self.sheet.views.clear();
+        }
         self.sheet.editor = None;
         self.keys.clear();
         self.feedback = None;
         self.ai_result = None;
         self.show_hints = 0;
+        self.typed.clear();
+        self.profile.set_cursor(&task.spec.skill);
         self.active = Some(Active {
             task,
             lesson,
@@ -351,9 +744,12 @@ impl LearningApp {
             recorded: false,
             query: String::new(),
             sql_result: None,
+            before_grade: None,
         });
+        self.apply_zoom();
         self.graded_revision = self.revision();
         self.apply_ribbon();
+        self.log_event("task.start", start_fields);
         Ok(())
     }
 
@@ -389,19 +785,101 @@ impl LearningApp {
         self.next_in_lesson(lesson)
     }
 
+    /// The stage the saved bookmark points at, when it is a supply step.
+    pub(crate) fn cursor_supply_stage(&self) -> Option<usize> {
+        self.profile.supply_stage.map(usize::from).filter(|s| *s < supply::STAGES)
+    }
+
+    fn supply_complete(&self) -> bool {
+        self.supply.as_ref().is_some_and(|r| r.complete)
+    }
+
+    /// Opens the single supply route at the saved cursor stage (stage 0 when there is none).
+    /// `start_supply` always builds stage 0, so the active task is advanced app-side afterwards.
+    pub fn open_supply(&mut self) -> Result<(), LearnError> {
+        let stage = self.cursor_supply_stage().filter(|_| !self.supply_complete()).unwrap_or(0);
+        self.start_supply()?;
+        if stage == 0 {
+            return Ok(());
+        }
+        // Every stage shares the same seeded layout, so the stage-0 workbook already holds the data.
+        let seed = self.active.as_ref().map(|a| a.task.spec.layout);
+        let seed = seed.unwrap_or_else(|| self.profile.seed());
+        let task = supply::task(stage, seed);
+        let focus = task.focus.clone();
+        if let Some(a) = &mut self.active {
+            a.task = task;
+        }
+        self.sheet.session.execute("selection.set", serde_json::json!({"range": focus}))?;
+        self.graded_revision = self.revision();
+        self.profile.supply_stage = Some(stage as u8);
+        self.save()
+    }
+
+    /// The one primary "Продолжить": never lose the place.
+    /// (a) an exercise is open → return to it; (b) otherwise the autopilot picks the next skill
+    /// (remediation → due reviews → frontier). The supply route is a section reached on purpose
+    /// via [`Self::open_supply`]; its own position still persists in `cursor`.
+    pub fn continue_course(&mut self) {
+        if self.active.is_some() {
+            self.screen = if self.supply_stage().is_some() {
+                Screen::Supply
+            } else if self.active.as_ref().is_some_and(|a| a.task.mode == Mode::Drill) {
+                Screen::Lesson
+            } else {
+                Screen::Case
+            };
+            return;
+        }
+        let r = self.start_lesson(None);
+        self.handle(r);
+    }
+
     fn next_in_lesson(&mut self, mut lesson: Lesson) -> Result<(), LearnError> {
-        for _ in 0..4 {
+        for _ in 0..16 {
             let Some(slot) = lesson.queue.pop_front() else {
                 self.finish_lesson(lesson);
                 return Ok(());
             };
-            let spec = self.profile.spec_for(&slot);
+            // Skills skipped in this lesson are not offered again in it.
+            let slot = match slot {
+                Slot::Frontier if !lesson.skipped.is_empty() => match self.profile.frontier_excluding(&lesson.skipped) {
+                    Some(id) => Slot::Focus(id.into()),
+                    None => continue,
+                },
+                Slot::Review(s) | Slot::Mix(s) | Slot::Retry(s) | Slot::Live(s) | Slot::Focus(s) if lesson.skipped.contains(&s) => continue,
+                other => other,
+            };
+            // A skill already done unaided is reviewed straight on live data, without a clean warm-up.
+            let slot = match slot {
+                Slot::Review(s) | Slot::Mix(s)
+                    if content::live::supports(&s)
+                        && self.profile.level(&s) >= 3
+                        && self.profile.live_ready(&s, now())
+                        && (!self.profile.sprinting(now()) || self.profile.goal_reached())
+                        && lesson.sprint.is_none() =>
+                {
+                    if !lesson.live_done.contains(&s) {
+                        lesson.live_done.push(s.clone());
+                    }
+                    Slot::Live(s)
+                }
+                other => other,
+            };
+            let mut spec = self.profile.spec_for(&slot);
+            // The live step right after its drill shares the book; the register opens below.
+            let below = gridcraft_learn_core::sheet::Setup::last_row(&self.sheet.session) + 3;
+            let keep = matches!(&slot, Slot::Live(s) if self.live_after.as_deref() == Some(s.as_str())) && below <= 200;
+            self.live_after = None;
+            if keep {
+                spec = content::live::with_top(&spec, below);
+            }
             match Task::generate(&spec) {
                 Ok(task) => {
                     if lesson.sprint.is_some() {
                         lesson.goal_total += task.goal_seconds;
                     }
-                    self.load(task, Some(lesson), None, Some(slot))?;
+                    self.load_with(task, Some(lesson), None, Some(slot), keep)?;
                     return self.save();
                 }
                 Err(e) => self.notice = Some(tr(&format!("Упражнение пропущено: {e}"))),
@@ -483,7 +961,15 @@ impl LearningApp {
     /// Picks a case the learner has seen least, for a fresh interview.
     pub fn start_interview(&mut self) -> Result<(), LearnError> {
         let seed = self.profile.seed() as usize;
-        let mut ids: Vec<(&str, u32)> = CASES.iter().map(|c| (c.id, self.profile.cases.get(c.id).map(|p| p.runs).unwrap_or(0))).collect();
+        let mut ids: Vec<(&str, u32)> = CASES
+            .iter()
+            .filter(|c| self.profile.case_open(c.id))
+            .map(|c| (c.id, self.profile.cases.get(c.id).map(|p| p.runs).unwrap_or(0)))
+            .collect();
+        if ids.is_empty() {
+            self.notice = Some("Сначала подготовьте навыки для кейса: доступные этапы показаны в маршруте и старом курсе.".into());
+            return Ok(());
+        }
         ids.sort_by_key(|(_, runs)| *runs);
         let least = ids.first().map(|x| x.1).unwrap_or(0);
         let pool: Vec<&str> = ids.iter().filter(|x| x.1 == least).map(|x| x.0).collect();
@@ -503,6 +989,10 @@ impl LearningApp {
         } else {
             self.cue(if eval.score >= 0.5 { Cue::Correct } else { Cue::Wrong });
         }
+        self.log_event(
+            "submit_case",
+            serde_json::json!({"score": eval.score, "seconds": seconds, "interview": interview.is_some(), "timed_out": timed_out}),
+        );
         self.report = Some(Report { task: a.task, eval, seconds, interview: interview.is_some(), xp: change.xp, timed_out });
         self.screen = Screen::Report;
         self.save()
@@ -517,6 +1007,7 @@ impl LearningApp {
         let seconds = a.seconds();
         let hints = a.hints;
         let first = !a.recorded;
+        let failing: Vec<String> = eval.outcomes.iter().filter(|o| !o.passed).map(|o| o.label.clone()).collect();
         let combo = a.lesson.as_ref().map(|l| l.combo).unwrap_or(0);
         let test_out = matches!(a.slot, Some(Slot::TestOut(_)));
         let mut fb = Feedback {
@@ -528,9 +1019,15 @@ impl LearningApp {
             goal_reached: false,
             corrected: passed && !first,
             change: Change::default(),
+            note: None,
         };
         if first {
             let task = a.task.clone();
+            let base = content::live::base(&task.spec.skill).unwrap_or(&task.spec.skill).to_string();
+            let before = BeforeGrade { progress: self.profile.skills.get(&base).cloned(), live: self.profile.live.get(&base).cloned(), skill: base };
+            if let Some(a) = self.active.as_mut() {
+                a.before_grade = Some(before);
+            }
             let change = self.profile.record(&task, passed, seconds, hints, combo, test_out, now());
             fb.xp = change.xp;
             fb.level_up = change.level_up;
@@ -578,8 +1075,24 @@ impl LearningApp {
                 }
             }
             self.celebrate(&change);
+            if change.live_rest {
+                // Second miss in a row on live data: open the full walkthrough instead of looping.
+                if let Some(a) = self.active.as_mut() {
+                    a.hints = a.task.hints.len() as u32;
+                    self.show_hints = a.hints;
+                }
+                fb.note = Some(
+                    ts("Разбор открыт в подсказках сверху: где ловушка и какая формула её ловит. Эта тема на грязных данных вернётся завтра.").into(),
+                );
+            }
             fb.change = change;
         }
+        self.log_mistake(&fb, first, hints, seconds);
+        let issues = self.formula_issues();
+        self.log_event(
+            "check",
+            serde_json::json!({"passed": passed, "failing": failing, "seconds": seconds, "hints": hints, "first": first, "issues": issues}),
+        );
         self.cue(if passed {
             if fb.level_up.is_some() {
                 Cue::LevelUp
@@ -659,6 +1172,7 @@ impl LearningApp {
         let questions = quiz::blitz(seed, track, 15);
         self.blitz = Some(Blitz { track, questions, index: 0, started: instant(), began: instant(), answers: Vec::new(), combo: 0 });
         self.screen = Screen::Blitz;
+        self.log_event("blitz_start", serde_json::json!({"track": format!("{track:?}"), "seed": seed, "questions": 15}));
     }
 
     /// Answers the current blitz question (`None` = time ran out).
@@ -690,6 +1204,10 @@ impl LearningApp {
         } else {
             Cue::Correct
         });
+        self.log_event(
+            "blitz_answer",
+            serde_json::json!({"choice": choice, "correct": right, "used": used, "points": pts, "modality": "mouse_or_key"}),
+        );
     }
 
     pub fn blitz_next(&mut self) {
@@ -721,6 +1239,10 @@ impl LearningApp {
             self.pending_confetti = true;
         }
         self.cue(Cue::Complete);
+        self.log_event(
+            "blitz_finish",
+            serde_json::json!({"correct": b.correct(), "total": b.questions.len(), "points": b.points(), "track": format!("{:?}", b.track)}),
+        );
         self.blitz_result = Some((b, change));
         self.screen = Screen::BlitzReport;
         let r = self.save();
@@ -742,19 +1264,117 @@ impl LearningApp {
     pub fn advance(&mut self) -> Result<(), LearnError> {
         let Some(a) = self.active.take() else { return Ok(()) };
         let passed = self.feedback.as_ref().is_some_and(|f| f.passed);
-        if !a.recorded {
-            self.profile.record(&a.task, false, a.seconds(), a.hints, 0, false, now());
-        }
+        // «Пропустить» before any check is a skip, not forgetting: no grade, no FSRS lapse, no
+        // retry; the skill is set aside for the rest of this lesson.
+        let skipped = !a.recorded;
+        self.log_event("advance", serde_json::json!({"passed": passed, "skill": a.task.spec.skill, "seconds": a.seconds()}));
         self.feedback = None;
         let Some(mut lesson) = a.lesson else {
             self.screen = Screen::Home;
             return self.save();
         };
         lesson.done += 1;
-        if !passed && lesson.retries < 3 {
+        let skill = a.task.spec.skill.clone();
+        let live = content::live::base(&skill).map(str::to_string);
+        if skipped {
+            let base = live.clone().unwrap_or_else(|| skill.clone());
+            if !lesson.skipped.contains(&base) {
+                lesson.skipped.push(base);
+            }
+            return self.next_in_lesson(lesson);
+        }
+        // A live register resting after two misses does not come back in this lesson.
+        let resting = live.as_deref().is_some_and(|b| !self.profile.live_ready(b, now()));
+        if !passed && lesson.retries < 3 && !resting {
             lesson.retries += 1;
-            lesson.queue.push_back(Slot::Retry(a.task.spec.skill.clone()));
+            // A missed register comes back as a fresh register at the same dirt tier.
+            lesson.queue.push_back(match &live {
+                Some(base) => Slot::Live(base.clone()),
+                None => Slot::Retry(skill.clone()),
+            });
             lesson.total += 1;
+        }
+        // A passed drill continues at once on hand-typed data, below it in the same book.
+        let eligible = passed
+            && live.is_none()
+            && lesson.sprint.is_none()
+            && !matches!(a.slot, Some(Slot::TestOut(_)))
+            && content::live::supports(&skill)
+            // Hidden entry errors only once the clean skill is solid («Сам»): earlier they just
+            // stack two difficulties and most registers fail.
+            && self.profile.level(&skill) >= 3
+            && self.profile.live_ready(&skill, now())
+            // During the preparation sprint every task moves toward the goal; live data waits
+            // until the goal is reached, then it is confidence practice.
+            && (!self.profile.sprinting(now()) || self.profile.goal_reached())
+            && !lesson.live_done.contains(&skill);
+        if eligible {
+            lesson.live_done.push(skill.clone());
+            lesson.queue.push_front(Slot::Live(skill.clone()));
+            lesson.total += 1;
+            self.live_after = Some(skill);
+        }
+        self.next_in_lesson(lesson)
+    }
+
+    /// Puts the exercise back as it was given, after the source got scrambled. Time and hints
+    /// already used stay: a fresh start, not a free retry.
+    pub fn reset_task(&mut self) -> Result<(), LearnError> {
+        let Some(task) = self.active.as_ref().map(|a| a.task.clone()) else { return Ok(()) };
+        if task.sql.is_some() {
+            return Ok(());
+        }
+        self.sheet.session = task.session()?;
+        self.sheet.views.clear();
+        self.sheet.editor = None;
+        self.keys.clear();
+        self.feedback = None;
+        self.apply_zoom();
+        self.graded_revision = self.revision();
+        self.apply_ribbon();
+        self.log_event("reset", serde_json::json!({"skill": task.spec.skill}));
+        Ok(())
+    }
+
+    /// «Мой ответ верный»: the learner disputes a miss. The grade is undone (no penalty, no
+    /// credit either), the case goes to the mistakes journal for the grader to be fixed, and the
+    /// lesson moves on without queueing a retry.
+    pub fn dispute(&mut self) -> Result<(), LearnError> {
+        if !self.feedback.as_ref().is_some_and(|f| !f.passed) {
+            return Ok(());
+        }
+        let (hints, seconds) = self.active.as_ref().map(|a| (a.hints, a.seconds())).unwrap_or_default();
+        if let Some(fb) = self.feedback.take() {
+            self.log_mistake_as(&fb, "disputed", hints, seconds);
+        }
+        if let Some(b) = self.active.as_ref().and_then(|a| a.before_grade.clone()) {
+            match b.progress {
+                Some(p) => {
+                    self.profile.skills.insert(b.skill.clone(), p);
+                }
+                None => {
+                    self.profile.skills.remove(&b.skill);
+                }
+            }
+            match b.live {
+                Some(l) => {
+                    self.profile.live.insert(b.skill.clone(), l);
+                }
+                None => {
+                    self.profile.live.remove(&b.skill);
+                }
+            }
+        }
+        self.log_event("dispute", serde_json::json!({"skill": self.active.as_ref().map(|a| a.task.spec.skill.clone())}));
+        self.feedback = None;
+        let Some(a) = self.active.take() else { return Ok(()) };
+        let Some(mut lesson) = a.lesson else {
+            self.screen = Screen::Home;
+            return self.save();
+        };
+        lesson.done += 1;
+        if let Some(l) = lesson.misses.checked_sub(1) {
+            lesson.misses = l;
         }
         self.next_in_lesson(lesson)
     }
@@ -762,15 +1382,21 @@ impl LearningApp {
     pub fn fix(&mut self) {
         self.feedback = None;
         self.graded_revision = self.revision();
+        self.log_event("fix", serde_json::json!({}));
     }
 
     pub fn hint(&mut self) {
+        let mut used = None;
         if let Some(a) = self.active.as_mut() {
             let max = a.task.hints.len() as u32;
             if a.hints < max {
                 a.hints += 1;
             }
             self.show_hints = a.hints;
+            used = Some(a.hints);
+        }
+        if let Some(hints) = used {
+            self.log_event("hint", serde_json::json!({"hints": hints}));
         }
     }
 
@@ -822,7 +1448,11 @@ impl LearningApp {
     }
 
     pub fn logic(&mut self, ctx: &egui::Context) {
-        self.sheet.logic(ctx);
+        self.observe_screen();
+        self.observe_supply();
+        if self.screen != Screen::Supply || !self.supply.as_ref().is_some_and(|r| r.paused || r.complete) {
+            self.sheet.logic(ctx);
+        }
         if let Some((seed, rx)) = &self.ai_pending
             && let Ok(result) = rx.try_recv()
         {
@@ -858,8 +1488,12 @@ impl LearningApp {
 
     /// Records shortcuts and takes Enter for the learning flow when a banner is up.
     pub fn raw_input_hook(&mut self, raw: &mut egui::RawInput) {
+        if self.screen == Screen::Supply && self.supply.as_ref().is_some_and(|r| r.paused || r.complete) {
+            return;
+        }
+        self.log_raw_input(raw);
         let mut taken = Vec::new();
-        let in_task = matches!(self.screen, Screen::Lesson | Screen::Case);
+        let in_task = matches!(self.screen, Screen::Lesson | Screen::Case | Screen::Supply);
         let editing = self.sheet.editor.is_some();
         for (i, e) in raw.events.iter().enumerate() {
             let egui::Event::Key { key, physical_key, pressed: true, modifiers, .. } = e else { continue };
@@ -914,6 +1548,75 @@ impl LearningApp {
         self.sheet.raw_input_hook(raw);
     }
 
+    /// Local-only capture of raw input, tagged with its modality. Runs before the sheet so it
+    /// sees exactly what the learner did; never consumes or alters the events.
+    fn log_raw_input(&mut self, raw: &egui::RawInput) {
+        if !self.events.is_enabled() {
+            return;
+        }
+        let cell = self.current_cell();
+        let mut events: Vec<(&str, serde_json::Value)> = Vec::new();
+        for e in &raw.events {
+            match e {
+                egui::Event::Key { key, physical_key, pressed, modifiers, repeat } => {
+                    events.push((
+                        "key",
+                        serde_json::json!({
+                            "key": key.name(),
+                            "physical": physical_key.as_ref().map(|k| k.name()),
+                            "modifiers": modifiers_label(*modifiers),
+                            "pressed": pressed,
+                            "repeat": repeat,
+                            "cell": cell,
+                            "modality": "keyboard",
+                        }),
+                    ));
+                    if *pressed {
+                        let ctrl = modifiers.ctrl || modifiers.command;
+                        if ctrl && *key == egui::Key::Z {
+                            events.push((if modifiers.shift { "redo" } else { "undo" }, serde_json::json!({"modality": "keyboard"})));
+                        } else if ctrl && *key == egui::Key::Y {
+                            events.push(("redo", serde_json::json!({"modality": "keyboard"})));
+                        }
+                        if self.sheet.editor.is_some() && matches!(*key, egui::Key::Enter | egui::Key::Tab) {
+                            let text = std::mem::take(&mut self.typed);
+                            events.push(("text_commit", serde_json::json!({"cell": cell, "text": text, "modality": "keyboard"})));
+                        }
+                    }
+                }
+                egui::Event::Text(t) => {
+                    self.typed.push_str(t);
+                    events.push(("text", serde_json::json!({"text": t, "cell": cell, "modality": "keyboard"})));
+                }
+                egui::Event::Paste(t) => events.push(("paste", serde_json::json!({"text": t, "cell": cell, "modality": "clipboard"}))),
+                egui::Event::Copy => events.push(("copy", serde_json::json!({"cell": cell, "modality": "clipboard"}))),
+                egui::Event::Cut => events.push(("cut", serde_json::json!({"cell": cell, "modality": "clipboard"}))),
+                egui::Event::PointerButton { pos, button, pressed, modifiers } => {
+                    self.pointer_down = *pressed;
+                    events.push((
+                        "pointer",
+                        serde_json::json!({
+                            "x": pos.x,
+                            "y": pos.y,
+                            "button": format!("{button:?}"),
+                            "pressed": pressed,
+                            "modifiers": modifiers_label(*modifiers),
+                            "cell": cell,
+                            "modality": "mouse",
+                        }),
+                    ));
+                }
+                egui::Event::PointerMoved(pos) if self.pointer_down => {
+                    events.push(("drag", serde_json::json!({"x": pos.x, "y": pos.y, "cell": cell, "modality": "mouse"})));
+                }
+                _ => {}
+            }
+        }
+        for (kind, fields) in events {
+            self.log_event(kind, fields);
+        }
+    }
+
     fn ask_ai(&mut self) {
         if !self.ai_consent
             || self.ai_pending.is_some()
@@ -943,10 +1646,10 @@ impl LearningApp {
         let enter = std::mem::take(&mut self.enter);
         let ctrl_enter = std::mem::take(&mut self.ctrl_enter);
         match self.screen {
+            Screen::Supply => supply::show(self, ui),
             Screen::Home => {
                 if enter {
-                    let r = self.start_lesson(None);
-                    self.handle(r);
+                    self.continue_course();
                 }
                 screens::home(self, ui);
             }
